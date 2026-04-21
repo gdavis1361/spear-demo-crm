@@ -11,7 +11,9 @@ const ld = leadId('ld_40218');
 
 describe('InMemoryEventLog v2', () => {
   let log: InMemoryEventLog;
-  beforeEach(() => { log = new InMemoryEventLog(); });
+  beforeEach(() => {
+    log = new InMemoryEventLog();
+  });
 
   it('append validates payload via Zod and rejects malformed input', async () => {
     const stream = dealStream(ld);
@@ -25,10 +27,12 @@ describe('InMemoryEventLog v2', () => {
 
   it('append rejects an illegal advance edge via the schema CHECK constraint', async () => {
     const stream = dealStream(ld);
-    const r = await log.append(stream, [{
-      opKey: 'k1',
-      payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'won' },
-    }]);
+    const r = await log.append(stream, [
+      {
+        opKey: 'k1',
+        payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'won' },
+      },
+    ]);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.code).toBe('invalid_payload');
@@ -38,14 +42,29 @@ describe('InMemoryEventLog v2', () => {
 
   it('assigns ULIDs and per-stream seqs', async () => {
     const stream = dealStream(ld);
-    const r1 = await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
-    const r2 = await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' },
-    }]);
+    const r1 = await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    const r2 = await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' },
+      },
+    ]);
     expect(r1.ok && r2.ok).toBe(true);
     if (!r1.ok || !r2.ok) return;
     expect(r1.events[0].seq).toBe(1);
@@ -56,14 +75,29 @@ describe('InMemoryEventLog v2', () => {
 
   it('reads stream events in chronological (ULID) order', async () => {
     const stream = dealStream(ld);
-    await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
-    await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' },
-    }]);
+    await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' },
+      },
+    ]);
     const back = await log.read(stream);
     expect(back).toHaveLength(2);
     expect(back[0].payload.kind).toBe('deal.created');
@@ -73,14 +107,40 @@ describe('InMemoryEventLog v2', () => {
 
   it('UNIQUE (stream, opKey): same opKey returns the prior result idempotently', async () => {
     const stream = dealStream(ld);
-    const r1 = await log.append(stream, [{
-      opKey: 'fixed-key',
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
-    const r2 = await log.append(stream, [{
-      opKey: 'fixed-key',
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
+    const r1 = await log.append(stream, [
+      {
+        opKey: 'fixed-key',
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    const r2 = await log.append(stream, [
+      {
+        opKey: 'fixed-key',
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
     if (!r1.ok) throw new Error('first append should succeed');
@@ -94,23 +154,75 @@ describe('InMemoryEventLog v2', () => {
     const a = 'deal:ld_a' as StreamKey;
     const b = 'deal:ld_b' as StreamKey;
     const p = 'promise:pr_x' as StreamKey;
-    await log.append(a, [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) } }]);
-    await log.append(b, [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) } }]);
-    await log.append(p, [{ opKey: ulid(), payload: { kind: 'promise.created', at, by: me, text: 't', dueAt: at } }]);
+    await log.append(a, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    await log.append(b, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    await log.append(p, [
+      { opKey: ulid(), payload: { kind: 'promise.created', at, by: me, text: 't', dueAt: at } },
+    ]);
     expect(await log.readPrefix('deal:')).toHaveLength(2);
     expect(await log.readPrefix('promise:')).toHaveLength(1);
   });
 
   it('appendIf with a stale predicate returns optimistic_lock_failure', async () => {
     const stream = dealStream(ld);
-    await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
+    await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
     const r = await log.appendIf(
       stream,
-      [{ opKey: ulid(), payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' } }],
-      () => false, // simulate "state changed since read"
+      [
+        {
+          opKey: ulid(),
+          payload: { kind: 'deal.advanced', at, by: me, from: 'inbound', to: 'qualify' },
+        },
+      ],
+      () => false // simulate "state changed since read"
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('optimistic_lock_failure');
@@ -120,20 +232,46 @@ describe('InMemoryEventLog v2', () => {
     const stream = dealStream(ld);
     const calls: number[] = [];
     const off = log.subscribe(({ ids }) => calls.push(ids.length));
-    await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
+    await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
     off();
     expect(calls).toEqual([1]);
   });
 
   it('clear empties the log', async () => {
     const stream = dealStream(ld);
-    await log.append(stream, [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
+    await log.append(stream, [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
     await log.clear();
     expect(await log.size()).toBe(0);
   });

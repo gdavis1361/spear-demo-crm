@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { IndexedDbEventLog, dealStream, openSpearDb, _resetDbConnectionForTests, STORE_PROMISES } from './events';
+import {
+  IndexedDbEventLog,
+  dealStream,
+  openSpearDb,
+  _resetDbConnectionForTests,
+  STORE_PROMISES,
+} from './events';
 import { instant } from '../lib/time';
 import { repId, leadId } from '../lib/ids';
 import { moneyFromMajor } from '../lib/money';
@@ -44,10 +50,28 @@ describe('appendAndUpsert cross-store atomicity (IDB)', () => {
     let onCommitFired = false;
     const result = await log.appendAndUpsert(
       dealStream(ld),
-      [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) } }],
+      [
+        {
+          opKey: ulid(),
+          payload: {
+            kind: 'deal.created',
+            at,
+            by: me,
+            stage: 'inbound',
+            value: moneyFromMajor(1),
+            displayId: 'LD-T',
+            title: 'T',
+            meta: '',
+            branch: 'T',
+            tags: [],
+          },
+        },
+      ],
       STORE_PROMISES,
       row,
-      () => { onCommitFired = true; },
+      () => {
+        onCommitFired = true;
+      }
     );
     expect(result.ok).toBe(true);
     expect(onCommitFired).toBe(true);
@@ -72,7 +96,7 @@ describe('appendAndUpsert cross-store atomicity (IDB)', () => {
       dealStream(ld),
       [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me } as never }], // missing fields
       STORE_PROMISES,
-      row as { id: string },
+      row as { id: string }
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('invalid_payload');

@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { exportSnapshot, validateSnapshot, previewImport, SNAPSHOT_SCHEMA_VERSION } from './snapshot';
+import {
+  exportSnapshot,
+  validateSnapshot,
+  previewImport,
+  SNAPSHOT_SCHEMA_VERSION,
+} from './snapshot';
 import { InMemoryEventLog, dealStream, accountStream } from './events';
 import { instant } from '../lib/time';
 import { repId, leadId, accountId, personId } from '../lib/ids';
@@ -13,7 +18,9 @@ const at = instant('2026-04-21T13:47:00Z');
 
 describe('exportSnapshot', () => {
   let log: InMemoryEventLog;
-  beforeEach(() => { log = new InMemoryEventLog(); });
+  beforeEach(() => {
+    log = new InMemoryEventLog();
+  });
 
   it('returns an empty document on a fresh log', async () => {
     const snap = await exportSnapshot(log);
@@ -23,8 +30,29 @@ describe('exportSnapshot', () => {
   });
 
   it('captures events from every namespace, sorted by ULID', async () => {
-    await log.append(dealStream(ld), [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) } }]);
-    await log.append(accountStream(acc), [{ opKey: ulid(), payload: { kind: 'account.message_received', at, from: personId('per_kruiz'), body: 'hi' } }]);
+    await log.append(dealStream(ld), [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    await log.append(accountStream(acc), [
+      {
+        opKey: ulid(),
+        payload: { kind: 'account.message_received', at, from: personId('per_kruiz'), body: 'hi' },
+      },
+    ]);
 
     const snap = await exportSnapshot(log);
     expect(snap.count).toBe(2);
@@ -49,12 +77,22 @@ describe('validateSnapshot', () => {
   });
 
   it('rejects a non-array events field', () => {
-    const r = validateSnapshot({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, takenAt: '', count: 0, events: 'nope' });
+    const r = validateSnapshot({
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      takenAt: '',
+      count: 0,
+      events: 'nope',
+    });
     expect(r.ok).toBe(false);
   });
 
   it('accepts a well-formed empty snapshot', () => {
-    const r = validateSnapshot({ schemaVersion: SNAPSHOT_SCHEMA_VERSION, takenAt: '', count: 0, events: [] });
+    const r = validateSnapshot({
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      takenAt: '',
+      count: 0,
+      events: [],
+    });
     expect(r.ok).toBe(true);
   });
 });
@@ -62,10 +100,29 @@ describe('validateSnapshot', () => {
 describe('previewImport', () => {
   it('counts accepted vs rejected envelopes', async () => {
     const log = new InMemoryEventLog();
-    await log.append(dealStream(ld), [{ opKey: ulid(), payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) } }]);
+    await log.append(dealStream(ld), [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
     const snap = await exportSnapshot(log);
     // Add a malformed event
-    const tainted = { ...snap, events: [...snap.events, { id: 'NOPE', stream: 'deal:x', payload: { kind: 'whatever' } }] };
+    const tainted = {
+      ...snap,
+      events: [...snap.events, { id: 'NOPE', stream: 'deal:x', payload: { kind: 'whatever' } }],
+    };
     const report = previewImport(tainted);
     expect(report.events.accepted).toBe(1);
     expect(report.events.rejected).toBe(1);
