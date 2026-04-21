@@ -5,6 +5,7 @@ node_modules
 dist
 .vite
 .vercel
+*.tsbuildinfo
 
 # Test artifacts
 coverage
