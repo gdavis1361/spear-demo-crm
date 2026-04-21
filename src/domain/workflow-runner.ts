@@ -19,18 +19,39 @@ import { track } from '../app/telemetry';
 import { startSpan } from '../app/observability';
 
 /**
+ * Per-activity invocation context. The runner hands this to every
+ * activity so side-effectful activities (an email send, an outbox
+ * enqueue) can tag their own storage with a stable, per-step key. Same
+ * `(workflowId, runId, stepIdx)` produces the same `opKey` on every
+ * attempt — retries are guaranteed idempotent at the activity boundary,
+ * the same way deal transitions are idempotent at the event-log
+ * boundary (`deal-machine.runTransition`).
+ */
+export interface ActivityContext {
+  readonly workflowId: string;
+  readonly runId: string;
+  readonly stepIdx: number;
+  /** 0-based retry index. 0 = first try. */
+  readonly attempt: number;
+  /** Deterministic per-step idempotency key: `${runId}:step:${stepIdx}`. */
+  readonly opKey: string;
+}
+
+/**
  * Per-verb activity implementation. Throwing (sync or async) is how an
- * activity signals failure; `run()` catches the throw, emits
- * `workflow.step_failed`, and marks the run terminal with disposition
- * `'failed'`. A return value is ignored — the event log is the durable
- * record of success, not the activity's return.
+ * activity signals failure. Retryable failures attach a `.code` property
+ * readable from a thrown `Error` (e.g. `{ code: 'rate_limited' }`);
+ * `def.retry.nonRetryable` matches on that code to short-circuit a retry
+ * loop. Anything in `nonRetryable` promotes to `step_failed` on first
+ * throw; everything else retries up to `def.retry.maxAttempts`.
  *
- * C2 will register concrete activities from `runtime.ts`; in C1 the map
- * is empty in production and the only exercise is via test injection.
+ * A return value is ignored — the event log is the durable record of
+ * success, not the activity's return.
  */
 export type ActivityFn = (
   step: Extract<WorkflowStep, { kind: 'action' }>,
-  ctx: RunContext
+  ctx: RunContext,
+  actCtx: ActivityContext
 ) => Promise<void>;
 
 export type ActivityRegistry = Partial<Record<ActionVerb, ActivityFn>>;
@@ -43,11 +64,18 @@ export interface RunContext {
   /** Optional override of "now" for deterministic tests. */
   readonly now?: () => Instant;
   /**
-   * Verb → activity dispatcher. Absent in the current demo path; supplied
-   * by `bootRuntime` once activities are wired (C2). Action steps whose
-   * verb is not registered here execute as no-ops (current behavior).
+   * Verb → activity dispatcher. Absent → action steps fall through as
+   * no-ops (pre-C2 behavior). `bootRuntime` supplies
+   * `DEFAULT_ACTIVITIES` from `workflow-activities.ts`; tests inject
+   * throwing variants to exercise retry + failure paths.
    */
   readonly activities?: ActivityRegistry;
+  /**
+   * Sleep override for deterministic tests. Defaults to real
+   * `setTimeout`. Tests pass `async () => {}` so retry backoff is
+   * instantaneous.
+   */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 export interface RunStepTrace {
@@ -266,9 +294,58 @@ export async function run(
       ms: Math.round(t1 - t0),
       steps: result.steps.length,
       status,
+      // T9: surface the discrete terminal label so dashboards can
+      // partition `failed` (dispatcher crashed) from `dropped`
+      // (filter said no) from `queued`/`handed-off`/`escalated`
+      // (intentional routes). Before this, any non-'ok' run lumped
+      // together as "status=failed" regardless of why.
+      disposition: result.disposition,
     },
   });
   return result;
+}
+
+// Activity retry loop. Runs the activity up to `def.retry.maxAttempts`;
+// backs off by `initialBackoffMs * multiplier^(attempt-1)` per attempt;
+// short-circuits on codes in `nonRetryable`. Returns null on success,
+// `{code,message}` on terminal failure — the caller writes the event.
+async function dispatchActivityWithRetry(
+  step: Extract<WorkflowStep, { kind: 'action' }>,
+  stepIdx: number,
+  ctx: RunContext,
+  def: WorkflowDefinition,
+  activity: ActivityFn
+): Promise<{ code: string; message: string } | null> {
+  const retry = def.retry;
+  const sleep = ctx.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const opKey = `${ctx.runId}:step:${stepIdx}`;
+  let lastCode = 'activity_threw';
+  let lastMessage = 'activity failed';
+  for (let attempt = 0; attempt < retry.maxAttempts; attempt++) {
+    try {
+      await activity(step, ctx, {
+        workflowId: def.id,
+        runId: ctx.runId,
+        stepIdx,
+        attempt,
+        opKey,
+      });
+      return null;
+    } catch (cause) {
+      lastCode =
+        typeof cause === 'object' && cause && 'code' in cause
+          ? String((cause as { code: unknown }).code)
+          : 'activity_threw';
+      lastMessage = cause instanceof Error ? cause.message : 'activity failed';
+      // Permanent code → don't consume further attempts.
+      if (retry.nonRetryable.includes(lastCode)) break;
+      // Exhausted → fall through to return below.
+      if (attempt === retry.maxAttempts - 1) break;
+      const backoff = retry.initialBackoffMs * retry.backoffMultiplier ** attempt;
+      await sleep(backoff);
+    }
+  }
+  return { code: lastCode, message: lastMessage };
 }
 
 // Core executor — shared trace-building logic with async activity dispatch
@@ -292,29 +369,28 @@ async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<Run
   for (let i = 0; i < def.steps.length; i++) {
     const step = def.steps[i];
 
-    // Activity dispatch: only `action` steps whose verb is registered run
-    // a real function. Unregistered verbs fall through to a no-op — same
-    // as the prior runner — so a partially-wired activity table doesn't
-    // break untested workflows.
+    // Activity dispatch (T3): only `action` steps whose verb is registered
+    // run a real function. Unregistered verbs fall through as no-ops so a
+    // partially-wired activity table doesn't break untested workflows.
+    //
+    // Retries are bounded by `def.retry.maxAttempts`. Thrown errors whose
+    // `.code` is in `def.retry.nonRetryable` promote to `step_failed` on
+    // first throw — matches the schedule registry's retry discipline.
+    // Per-step opKey is `${runId}:step:${idx}` — the same idempotency
+    // key every retry attempt sees, so an activity that enqueues an
+    // outbox mutation (say) can't double-write across retries.
     if (step.kind === 'action') {
       const activity = ctx.activities?.[step.verb];
       if (activity) {
-        try {
-          await activity(step, ctx);
-        } catch (cause) {
-          const at = nowFn();
-          const code =
-            (typeof cause === 'object' && cause && 'code' in cause
-              ? String((cause as { code: unknown }).code)
-              : undefined) ?? 'activity_threw';
-          const message = cause instanceof Error ? cause.message : 'activity failed';
+        const failure = await dispatchActivityWithRetry(step, i, ctx, def, activity);
+        if (failure) {
           events.push({
             kind: 'workflow.step_failed',
-            at,
+            at: nowFn(),
             stepIdx: i,
             stepKind: step.kind,
-            code,
-            message,
+            code: failure.code,
+            message: failure.message,
           });
           steps.push({
             idx: i,
@@ -322,7 +398,7 @@ async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<Run
             outcome: 'failed',
             label: step.label,
             ms: 0,
-            error: message,
+            error: failure.message,
           });
           failed = true;
           break;

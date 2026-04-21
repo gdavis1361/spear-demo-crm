@@ -205,6 +205,28 @@ export type TrackEvent =
         ms: number;
         steps: number;
         status: 'ok' | 'failed';
+        // T9: discrete terminal label. `status` stays binary for SLI math;
+        // `disposition` partitions the run into its actual terminal so
+        // dashboards can distinguish `failed` (crash) from `dropped`
+        // (filter) from routing-intent labels (queued / handed-off /
+        // escalated / waiting).
+        disposition: 'queued' | 'dropped' | 'handed-off' | 'escalated' | 'failed' | 'waiting';
+      };
+    }
+  // T3: per-step activity dispatch. Fires once per attempt (retry → N
+  // events) so dashboards can tail-latency partition by verb and count
+  // retries without replaying the event log. `opKey` is the stable
+  // per-step idempotency key — same value across retries.
+  | {
+      name: 'workflow.activity_dispatched';
+      props: {
+        workflowId: string;
+        runId: string;
+        stepIdx: number;
+        attempt: number;
+        verb: string;
+        template: string;
+        opKey: string;
       };
     };
 

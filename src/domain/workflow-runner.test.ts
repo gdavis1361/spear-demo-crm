@@ -142,6 +142,7 @@ describe('run() with a failing activity (T4)', () => {
       {
         input: {},
         runId: 'r_fail_1',
+        sleep: async () => undefined,
         activities: {
           email: async () => {
             const e = new Error('smtp down') as Error & { code?: string };
@@ -176,6 +177,7 @@ describe('run() with a failing activity (T4)', () => {
       {
         input: {},
         runId: 'r_fail_2',
+        sleep: async () => undefined,
         activities: {
           email: async () => {
             throw new Error('smtp down');
@@ -203,5 +205,108 @@ describe('run() with a failing activity (T4)', () => {
     const r = await run(def, { input: {}, runId: 'r_noact' }, log);
     expect(r.disposition).toBe('queued');
     expect(r.steps.some((s) => s.outcome === 'failed')).toBe(false);
+  });
+});
+
+// T3 — retry discipline + per-step opKey. The runner retries a failing
+// activity up to `def.retry.maxAttempts`, backs off between tries, and
+// short-circuits on codes in `nonRetryable`. Per-step opKey is stable
+// across retries so the activity itself (not the runner) can be
+// idempotent by storing under the same key on each attempt.
+describe('run() activity retries (T3)', () => {
+  beforeEach(() => _setNowForTests(() => instant(NOW)));
+  afterEach(() => _resetNowForTests());
+
+  const def = (retry = DEFAULT_RETRY): WorkflowDefinition => ({
+    id: 'wf-retry',
+    name: 't',
+    version: 1,
+    description: '',
+    retry,
+    steps: [
+      { kind: 'trigger', source: 'manual', label: 'go' },
+      { kind: 'action', label: 'send', verb: 'email', template: 't' },
+      { kind: 'end', label: 'done', disposition: 'queued' },
+    ],
+  });
+
+  it('retries until success; sees the same opKey every attempt', async () => {
+    const opKeys: string[] = [];
+    const attempts: number[] = [];
+    let n = 0;
+    const r = await run(
+      def({ maxAttempts: 3, initialBackoffMs: 1, backoffMultiplier: 1, nonRetryable: [] }),
+      {
+        input: {},
+        runId: 'r_retry_ok',
+        sleep: async () => undefined,
+        activities: {
+          email: async (_step, _ctx, actCtx) => {
+            opKeys.push(actCtx.opKey);
+            attempts.push(actCtx.attempt);
+            n++;
+            if (n < 2) throw new Error('transient');
+          },
+        },
+      },
+      new InMemoryEventLog()
+    );
+    expect(r.disposition).toBe('queued');
+    expect(n).toBe(2);
+    expect(opKeys).toEqual(['r_retry_ok:step:1', 'r_retry_ok:step:1']); // stable
+    expect(attempts).toEqual([0, 1]); // incremented
+  });
+
+  it('promotes to step_failed once maxAttempts is exhausted', async () => {
+    let tries = 0;
+    const r = await run(
+      def({ maxAttempts: 2, initialBackoffMs: 1, backoffMultiplier: 1, nonRetryable: [] }),
+      {
+        input: {},
+        runId: 'r_retry_exhausted',
+        sleep: async () => undefined,
+        activities: {
+          email: async () => {
+            tries++;
+            throw new Error('still down');
+          },
+        },
+      },
+      new InMemoryEventLog()
+    );
+    expect(r.disposition).toBe('failed');
+    expect(tries).toBe(2);
+  });
+
+  it('non-retryable codes short-circuit on first throw', async () => {
+    let tries = 0;
+    const r = await run(
+      def({
+        maxAttempts: 5,
+        initialBackoffMs: 1,
+        backoffMultiplier: 1,
+        nonRetryable: ['permission_denied'],
+      }),
+      {
+        input: {},
+        runId: 'r_retry_perm',
+        sleep: async () => undefined,
+        activities: {
+          email: async () => {
+            tries++;
+            const e = new Error('nope') as Error & { code?: string };
+            e.code = 'permission_denied';
+            throw e;
+          },
+        },
+      },
+      new InMemoryEventLog()
+    );
+    expect(r.disposition).toBe('failed');
+    expect(tries).toBe(1);
+    const failed = r.events.find((e) => e.kind === 'workflow.step_failed');
+    expect(failed && failed.kind === 'workflow.step_failed' && failed.code).toBe(
+      'permission_denied'
+    );
   });
 });

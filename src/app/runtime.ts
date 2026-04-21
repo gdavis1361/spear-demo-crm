@@ -12,6 +12,7 @@ import { DealProjection } from '../domain/deal-projection';
 import { SignalProjection } from '../domain/signal-projection';
 import { bootstrapDealsIfEmpty } from '../domain/deal-bootstrap';
 import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
+import { DEFAULT_ACTIVITIES } from '../domain/workflow-activities';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
 import { recordVacuumOutcome } from '../domain/stats';
@@ -421,6 +422,11 @@ export function startDemoWorkflowRunner(): () => void {
     const ctx = {
       input: { has_orders: 'true', recently_quoted: 'false' },
       runId: `run_${Date.now().toString(36)}`,
+      // T3: pass the default activity registry so action steps emit
+      // `workflow.activity_dispatched` events per (runId, stepIdx).
+      // Absent the registry, action steps fall through as no-ops —
+      // useful for tests, not for production telemetry.
+      activities: DEFAULT_ACTIVITIES,
     };
     const result = await runWorkflow(PCS_CYCLE_OUTREACH, ctx, eventLog);
     runHistory.push(result);
