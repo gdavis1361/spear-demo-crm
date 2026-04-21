@@ -5,37 +5,66 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "06:00"
+      time: '06:00'
       timezone: Etc/UTC
     open-pull-requests-limit: 10
     versioning-strategy: increase
-    labels: ["kind:chore", "deps"]
+    labels: ['kind:chore', 'deps']
     commit-message:
       prefix: chore
       include: scope
+    # Hold off on majors that need deliberate upgrade work, not auto-merge.
+    # Each entry below closed at least once with rationale recorded on the
+    # original PR — revisit when the reason no longer applies.
+    ignore:
+      # React 19: behavioral changes (ref-as-prop, removed legacy APIs, new
+      # hooks). Upgrade when planning a dedicated "React 19 upgrade" PR.
+      - dependency-name: 'react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-dom'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/react-dom'
+        update-types: ['version-update:semver-major']
+      # Vite 8: chunk-rename breaks `.size-limit.json` pattern + needs
+      # plugin-react@6 alignment. Upgrade deliberately.
+      - dependency-name: 'vite'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@vitejs/plugin-react'
+        update-types: ['version-update:semver-major']
+      # ESLint 10: plugin ecosystem (eslint-plugin-react, eslint-plugin-jsx-a11y,
+      # typescript-eslint) still targets v9. Upgrade when all three support
+      # v10 — at which point we can also drop `legacy-peer-deps=true` from
+      # `.npmrc`.
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@eslint/js'
+        update-types: ['version-update:semver-major']
+
     groups:
       # Group safe updates so we don't drown in PRs.
       typescript:
-        patterns: ["typescript", "@types/*", "typescript-eslint"]
+        patterns: ['typescript', '@types/*', 'typescript-eslint']
       lint-format:
-        patterns: ["eslint", "eslint-*", "@eslint/*", "prettier"]
+        patterns: ['eslint', 'eslint-*', '@eslint/*', 'prettier']
       test:
-        patterns: ["vitest", "@vitest/*", "@playwright/*", "happy-dom", "fake-indexeddb"]
+        patterns: ['vitest', '@vitest/*', '@playwright/*', 'happy-dom', 'fake-indexeddb']
       react:
-        patterns: ["react", "react-dom"]
+        patterns: ['react', 'react-dom']
       build:
-        patterns: ["vite", "@vitejs/*"]
+        patterns: ['vite', '@vitejs/*']
       ontology:
-        patterns: ["zod"]
+        patterns: ['zod']
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
-      time: "06:00"
+      time: '06:00'
       timezone: Etc/UTC
-    labels: ["kind:chore", "deps"]
+    labels: ['kind:chore', 'deps']
     commit-message:
       prefix: chore
       include: scope
