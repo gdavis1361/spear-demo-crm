@@ -22,7 +22,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium-smoke',
-      testMatch: ['smoke.spec.ts', 'a11y.spec.ts', 'seed-activation.spec.ts'],
+      testMatch: [
+        'smoke.spec.ts',
+        'a11y.spec.ts',
+        'seed-activation.spec.ts',
+        'seed-banner.spec.ts',
+      ],
       use: { ...devices['Desktop Chrome'] },
     },
     // Cross-browser smoke: confirm the same flows work on Firefox + WebKit.

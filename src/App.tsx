@@ -1,6 +1,7 @@
 import React from 'react';
 import { Topbar, Rail, Tweaks } from './components/shell';
 import { Peek, CommandBar, CommandPalette, FocusProvider } from './components/nouns';
+import { SeedBanner } from './components/seed-banner';
 import { AppProvider } from './app/context';
 import { readJson, readString, writeJson, writeString } from './app/state';
 import { track } from './app/telemetry';
@@ -23,8 +24,16 @@ const SCREEN_LABEL: Record<Screen, string> = {
   workflows: '07 Workflows',
 };
 
-const VALID_SCREENS: ReadonlySet<Screen> = new Set(['today','pipeline','pond','signals','account','quote','workflows']);
-const VALID_ROLES: ReadonlySet<Role> = new Set(['rep','ae','mgr']);
+const VALID_SCREENS: ReadonlySet<Screen> = new Set([
+  'today',
+  'pipeline',
+  'pond',
+  'signals',
+  'account',
+  'quote',
+  'workflows',
+]);
+const VALID_ROLES: ReadonlySet<Role> = new Set(['rep', 'ae', 'mgr']);
 
 function parseTweaks(raw: unknown): TweaksState | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -33,18 +42,34 @@ function parseTweaks(raw: unknown): TweaksState | null {
 }
 
 // Route-level code-splitting: each screen is a separate chunk.
-const Today           = React.lazy(() => import('./screens/today-pond').then(m => ({ default: m.Today })));
-const Pond            = React.lazy(() => import('./screens/today-pond').then(m => ({ default: m.Pond })));
-const Pipeline        = React.lazy(() => import('./screens/pipeline').then(m => ({ default: m.Pipeline })));
-const Signals         = React.lazy(() => import('./screens/signals').then(m => ({ default: m.Signals })));
-const Account         = React.lazy(() => import('./screens/account-quote-workflows').then(m => ({ default: m.Account })));
-const Quote           = React.lazy(() => import('./screens/account-quote-workflows').then(m => ({ default: m.Quote })));
-const Workflows       = React.lazy(() => import('./screens/account-quote-workflows').then(m => ({ default: m.Workflows })));
-const ManagerToday    = React.lazy(() => import('./components/extras').then(m => ({ default: m.ManagerToday })));
-const ManagerPond     = React.lazy(() => import('./components/extras').then(m => ({ default: m.ManagerPond })));
+const Today = React.lazy(() => import('./screens/today-pond').then((m) => ({ default: m.Today })));
+const Pond = React.lazy(() => import('./screens/today-pond').then((m) => ({ default: m.Pond })));
+const Pipeline = React.lazy(() =>
+  import('./screens/pipeline').then((m) => ({ default: m.Pipeline }))
+);
+const Signals = React.lazy(() => import('./screens/signals').then((m) => ({ default: m.Signals })));
+const Account = React.lazy(() =>
+  import('./screens/account-quote-workflows').then((m) => ({ default: m.Account }))
+);
+const Quote = React.lazy(() =>
+  import('./screens/account-quote-workflows').then((m) => ({ default: m.Quote }))
+);
+const Workflows = React.lazy(() =>
+  import('./screens/account-quote-workflows').then((m) => ({ default: m.Workflows }))
+);
+const ManagerToday = React.lazy(() =>
+  import('./components/extras').then((m) => ({ default: m.ManagerToday }))
+);
+const ManagerPond = React.lazy(() =>
+  import('./components/extras').then((m) => ({ default: m.ManagerPond }))
+);
 
 function ScreenSkeleton() {
-  return <div className="screen-skeleton" aria-busy="true" aria-live="polite">Loading…</div>;
+  return (
+    <div className="screen-skeleton" aria-busy="true" aria-live="polite">
+      Loading…
+    </div>
+  );
 }
 
 export function App() {
@@ -57,7 +82,9 @@ export function App() {
     return v && VALID_ROLES.has(v as Role) ? (v as Role) : 'rep';
   });
   const [tweaksOpen, setTweaksOpen] = React.useState(false);
-  const [t, setT] = React.useState<TweaksState>(() => readJson('tweaks', parseTweaks) ?? TWEAK_DEFAULTS);
+  const [t, setT] = React.useState<TweaksState>(
+    () => readJson('tweaks', parseTweaks) ?? TWEAK_DEFAULTS
+  );
 
   const setScreen = React.useCallback((next: Screen, method: 'click' | 'keyboard' = 'click') => {
     setScreenRaw((prev) => {
@@ -76,8 +103,12 @@ export function App() {
     });
   }, []);
 
-  React.useEffect(() => { writeString('screen', screen); }, [screen]);
-  React.useEffect(() => { writeString('role', role); }, [role]);
+  React.useEffect(() => {
+    writeString('screen', screen);
+  }, [screen]);
+  React.useEffect(() => {
+    writeString('role', role);
+  }, [role]);
   React.useEffect(() => {
     document.documentElement.setAttribute('data-ground', t.ground);
   }, [t.ground]);
@@ -95,11 +126,29 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.matches?.('input, textarea, select')) return;
-      if (e.key === 'g') { g = true; clearTimeout(gt); gt = setTimeout(() => { g = false; }, 800); return; }
+      if (e.key === 'g') {
+        g = true;
+        clearTimeout(gt);
+        gt = setTimeout(() => {
+          g = false;
+        }, 800);
+        return;
+      }
       if (g) {
-        const map: Record<string, Screen> = { t: 'today', p: 'pipeline', h: 'pond', s: 'signals', a: 'account', q: 'quote', w: 'workflows' };
+        const map: Record<string, Screen> = {
+          t: 'today',
+          p: 'pipeline',
+          h: 'pond',
+          s: 'signals',
+          a: 'account',
+          q: 'quote',
+          w: 'workflows',
+        };
         const next = map[e.key];
-        if (next) { setScreen(next, 'keyboard'); g = false; }
+        if (next) {
+          setScreen(next, 'keyboard');
+          g = false;
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -109,13 +158,21 @@ export function App() {
   return (
     <AppProvider screen={screen} setScreen={setScreenRaw} role={role} setRole={setRole}>
       <FocusProvider>
-        <a href="#main" className="skip-link">Skip to main content</a>
-        <div className="app with-cmdbar" data-density={t.density} data-screen-label={SCREEN_LABEL[screen]}>
+        <a href="#main" className="skip-link">
+          Skip to main content
+        </a>
+        <SeedBanner />
+        <div
+          className="app with-cmdbar"
+          data-density={t.density}
+          data-screen-label={SCREEN_LABEL[screen]}
+        >
           <Topbar screen={screen} role={role} setRole={setRole} ground={t.ground} />
           <Rail screen={screen} setScreen={setScreenRaw} onOpenTweaks={() => setTweaksOpen(true)} />
           <main className="main" id="main">
             <React.Suspense fallback={<ScreenSkeleton />}>
-              {screen === 'today' && (role === 'mgr' ? <ManagerToday /> : <Today sort={t.todaySort} />)}
+              {screen === 'today' &&
+                (role === 'mgr' ? <ManagerToday /> : <Today sort={t.todaySort} />)}
               {screen === 'pipeline' && <Pipeline layout={t.pipeLayout} />}
               {screen === 'pond' && (role === 'mgr' ? <ManagerPond /> : <Pond />)}
               {screen === 'signals' && <Signals />}

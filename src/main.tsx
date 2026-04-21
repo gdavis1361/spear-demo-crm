@@ -12,7 +12,7 @@ import { track, flush as flushTelemetry } from './app/telemetry';
 // `./seeds` — so the scenario registry + builders + Zod schemas stay in
 // their lazy chunk rather than landing in the initial bundle.
 // `activateSeedFromUrl()` is a no-op when `?seed=` is absent.
-import { activateSeedFromUrl } from './seeds/activation';
+import { activateSeedFromUrl, consumePendingReset } from './seeds/activation';
 import '@fontsource/instrument-serif/400.css';
 import '@fontsource/instrument-serif/400-italic.css';
 import '@fontsource/jetbrains-mono/400.css';
@@ -24,12 +24,6 @@ import './styles/nouns.css';
 
 // Observability first: captures any exception thrown during the boot sequence.
 initObservability();
-
-// Detect `?seed=<name>` and, if it resolves to a registered scenario, swap
-// the IndexedDB name BEFORE runtime.ts is dynamically imported below. The
-// user's real DB (`spear-events`) is only opened when `?seed` is absent
-// or invalid.
-const seedActivation = activateSeedFromUrl();
 
 // Wrap each boot stage so a failure in one emits a structured
 // `app.boot_failed` event instead of a silent blank page. We `flushTelemetry`
@@ -56,22 +50,37 @@ try {
   bootFailed('install_mock', err);
 }
 
-import('./app/runtime').then(async ({ bootRuntime, startDemoWorkflowRunner }) => {
-  try {
-    // When a seed is active, boot against that scenario instead of the
-    // default `canonical`. When `seedActivation.scenario` is null,
-    // bootRuntime falls back to canonical — byte-identical to the
-    // pre-Phase-3 behavior.
-    await bootRuntime(seedActivation.scenario ? { scenario: seedActivation.scenario } : {});
-  } catch (err) {
-    bootFailed('runtime', err);
-  }
-  try {
-    startDemoWorkflowRunner();
-  } catch (err) {
-    bootFailed('workflow_runner', err);
-  }
-});
+// Strict ordering:
+//   1. consumePendingReset  — delete any DB armed by the banner's Reset
+//                             (safe only while no IndexedDB connection is
+//                             open, which is why it runs before step 2).
+//   2. activateSeedFromUrl  — calls setDbName() for the scenario's DB.
+//                             Must land before step 3, or PromiseStore
+//                             construction inside runtime.ts will lock
+//                             the DB name to its default ('spear-events').
+//   3. import('./app/runtime') — opens the DB (now under the chosen name),
+//                                hydrates stores, runs the scenario.
+//   4. bootRuntime(scenario) — orchestrates seeding + ticker + schedules.
+//
+// `.then()` chaining keeps the bundle on ES2020 without top-level await.
+consumePendingReset()
+  .then(() => activateSeedFromUrl())
+  .then(async (activation) => {
+    const { bootRuntime, startDemoWorkflowRunner } = await import('./app/runtime');
+    try {
+      // When a seed is active, boot against that scenario instead of
+      // `canonical`. When activation.scenario is null, bootRuntime falls
+      // back to canonical — byte-identical to pre-Phase-3 behavior.
+      await bootRuntime(activation.scenario ? { scenario: activation.scenario } : {});
+    } catch (err) {
+      bootFailed('runtime', err);
+    }
+    try {
+      startDemoWorkflowRunner();
+    } catch (err) {
+      bootFailed('workflow_runner', err);
+    }
+  });
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
