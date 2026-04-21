@@ -1,6 +1,7 @@
 import React from 'react';
 import { newRequestId, type RequestId } from './lib/ids';
 import { track } from './app/telemetry';
+import { captureException } from './app/observability';
 
 type Props = {
   children: React.ReactNode;
@@ -18,8 +19,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     const requestId = this.state.requestId ?? newRequestId();
-    // Sentry/Bugsnag hook would go here:
-    //   Sentry.captureException(error, { tags: { requestId } });
+    captureException(error, { requestId, componentStack: info.componentStack });
     console.error('[ErrorBoundary]', { error, info, requestId });
     track({ name: 'error.boundary', props: { message: error.message, requestId } });
   }
@@ -60,7 +60,8 @@ function DefaultFallback({
     <div role="alert" className="error-boundary">
       <h1 className="error-title">Something broke.</h1>
       <p className="error-body">
-        We logged the error. If you need support, share this ID so we can trace the request end-to-end.
+        We logged the error. If you need support, share this ID so we can trace the request
+        end-to-end.
       </p>
       <div className="error-idrow">
         <code className="error-reqid">{requestId}</code>
@@ -70,11 +71,18 @@ function DefaultFallback({
       </div>
       <details className="error-details">
         <summary>Technical details</summary>
-        <pre className="error-stack">{error.message}{error.stack ? `\n\n${error.stack}` : ''}</pre>
+        <pre className="error-stack">
+          {error.message}
+          {error.stack ? `\n\n${error.stack}` : ''}
+        </pre>
       </details>
       <div className="error-actions">
-        <button type="button" className="btn primary" onClick={reset}>Try again</button>
-        <button type="button" className="btn" onClick={() => window.location.reload()}>Reload</button>
+        <button type="button" className="btn primary" onClick={reset}>
+          Try again
+        </button>
+        <button type="button" className="btn" onClick={() => window.location.reload()}>
+          Reload
+        </button>
       </div>
     </div>
   );
