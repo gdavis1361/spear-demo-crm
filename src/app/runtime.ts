@@ -11,9 +11,10 @@ import { ScheduleRegistry } from '../domain/schedules';
 import { DealProjection } from '../domain/deal-projection';
 import { SignalProjection } from '../domain/signal-projection';
 import { bootstrapDealsIfEmpty } from '../domain/deal-bootstrap';
-import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
+import { run as runWorkflow, deterministicRunId, type RunResult } from '../domain/workflow-runner';
 import { DEFAULT_ACTIVITIES } from '../domain/workflow-activities';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
+import { now as nowInstant } from '../lib/time';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
 import { recordVacuumOutcome } from '../domain/stats';
 import { Outbox } from '../domain/outbox';
@@ -221,6 +222,13 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
 
 // ─── Schedules ─────────────────────────────────────────────────────────────
 // Three live polls register here. The Signals page reads them.
+//
+// T5: each schedule's run also dispatches matching workflows via
+// `dispatchWorkflowsForSource`. The runner's first-append gate + the
+// deterministic runId (T6) keep this idempotent under rapid firings:
+// two schedule runs in the same minute-bucket produce the same runId,
+// and the second `run()` call sees the first's events and short-
+// circuits to a read-only replay instead of emitting duplicates.
 
 function registerSchedules(): void {
   scheduleRegistry.register({
@@ -236,6 +244,13 @@ function registerSchedules(): void {
     run: async (runId, _at) => {
       // Stand-in: real impl polls /milmove/cycles. We pretend to find 0–4 items.
       const items = Math.floor(Math.random() * 5);
+      if (items > 0) {
+        await dispatchWorkflowsForSource('milmove.cycle', {
+          has_orders: 'true',
+          recently_quoted: 'false',
+          items,
+        });
+      }
       return { runId, items };
     },
   });
@@ -246,6 +261,9 @@ function registerSchedules(): void {
     retry: { maxAttempts: 3, initialBackoffMs: 1500, backoffMultiplier: 2, nonRetryable: [] },
     run: async (runId, _at) => {
       const items = Math.floor(Math.random() * 3);
+      if (items > 0) {
+        await dispatchWorkflowsForSource('sam.gov.rfp', { items });
+      }
       return { runId, items };
     },
   });
@@ -256,9 +274,36 @@ function registerSchedules(): void {
     retry: { maxAttempts: 2, initialBackoffMs: 2000, backoffMultiplier: 2, nonRetryable: [] },
     run: async (runId, _at) => {
       const items = Math.floor(Math.random() * 2);
+      if (items > 0) {
+        await dispatchWorkflowsForSource('facebook.spouses', { items });
+      }
       return { runId, items };
     },
   });
+}
+
+// T5 — trigger → workflow dispatch. Iterate registered workflows; any
+// whose `steps[0].source` matches the firing schedule name gets run.
+// Deterministic runId (T6) means concurrent schedule tabs don't double-
+// dispatch, and rapid firings within the same bucket collapse to one
+// durable run.
+export async function dispatchWorkflowsForSource(
+  source: string,
+  payload: Readonly<Record<string, unknown>>
+): Promise<void> {
+  const at = nowInstant();
+  for (const wf of WORKFLOWS) {
+    const first = wf.steps[0];
+    if (first.kind !== 'trigger') continue;
+    if (first.source !== source) continue;
+    const runId = deterministicRunId(wf.id, source, at, payload);
+    const result = await runWorkflow(
+      wf,
+      { input: payload, runId, activities: DEFAULT_ACTIVITIES },
+      eventLog
+    );
+    runHistory.push(result);
+  }
 }
 
 // ─── Outbox drainers ───────────────────────────────────────────────────────
@@ -423,13 +468,19 @@ let demoTimer: ReturnType<typeof setInterval> | null = null;
 export function startDemoWorkflowRunner(): () => void {
   if (demoTimer || typeof window === 'undefined') return () => undefined;
   const fire = async () => {
+    // T6: runId derives from (workflowId, source, minute-bucket,
+    // payload). Two firings within the same bucket collapse to the
+    // same runId and dedupe at the first-append gate. Pre-T6, the
+    // demo used `Date.now().toString(36)` which produced a fresh
+    // runId on every tick — every minute wrote a new
+    // `workflow.run_started`, and PCS runs accumulated in the log
+    // until vacuum.
+    const at = nowInstant();
+    const input = { has_orders: 'true', recently_quoted: 'false' };
+    const runId = deterministicRunId(PCS_CYCLE_OUTREACH.id, 'manual', at, input);
     const ctx = {
-      input: { has_orders: 'true', recently_quoted: 'false' },
-      runId: `run_${Date.now().toString(36)}`,
-      // T3: pass the default activity registry so action steps emit
-      // `workflow.activity_dispatched` events per (runId, stepIdx).
-      // Absent the registry, action steps fall through as no-ops —
-      // useful for tests, not for production telemetry.
+      input,
+      runId,
       activities: DEFAULT_ACTIVITIES,
     };
     const result = await runWorkflow(PCS_CYCLE_OUTREACH, ctx, eventLog);

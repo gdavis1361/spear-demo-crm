@@ -125,6 +125,45 @@ export function patched(runVersion: number, introducedAt: number): boolean {
   return runVersion >= introducedAt;
 }
 
+// ─── Deterministic run-id (T6) ─────────────────────────────────────────────
+//
+// Runs are identified by the tuple `(workflowId, source, time-bucket,
+// payload)`. Hashing that tuple means two fire events from the same
+// trigger in the same bucket collide on the same `runId` — and the
+// first-append gate (T7) turns the second into a read-only replay
+// instead of a duplicate run. Pre-T6, the demo timer used
+// `Date.now().toString(36)` which could collide silently under load
+// (two firings in the same millisecond) and, worse, did NOT collide
+// under normal schedule cadence — so the same trigger produced a
+// fresh run every minute.
+//
+// Hash is djb2 — 32-bit, no crypto dependency, suitable for the demo's
+// dedup window. Real deployments can upgrade to a SubtleCrypto digest
+// for broader uniqueness; the surface is identical.
+
+export function deterministicRunId(
+  workflowId: string,
+  source: string,
+  at: Instant,
+  payload: Readonly<Record<string, unknown>>,
+  bucketMs = 60_000
+): string {
+  const bucket = Math.floor(new Date(at.iso).getTime() / bucketMs);
+  // Stable stringification — sorted keys so `{a,b}` and `{b,a}` hash to
+  // the same value.
+  const keys = Object.keys(payload).sort();
+  const stable: Record<string, unknown> = {};
+  for (const k of keys) stable[k] = payload[k];
+  const seed = `${workflowId}|${source}|${bucket}|${JSON.stringify(stable)}`;
+  return `run_${djb2Hex(seed)}`;
+}
+
+function djb2Hex(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i); // h * 33 ^ c
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
 // ─── Core executor ─────────────────────────────────────────────────────────
 // Executes deterministically. `shouldPass` is pure. `wait` steps short-
 // circuit with a `waiting` disposition — a real runner would persist the

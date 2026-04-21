@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { validate, dryRun, run, replay, patched } from './workflow-runner';
+import { validate, dryRun, run, replay, patched, deterministicRunId } from './workflow-runner';
 import type { WorkflowDefinition } from './workflow-def';
 import { PCS_CYCLE_OUTREACH } from './workflow-def';
 import { InMemoryEventLog, workflowRunStream } from './events';
@@ -445,5 +445,78 @@ describe('run() race-safe first-append (T7)', () => {
     expect(again.disposition).toBe('queued');
     // Re-invocation of a terminal run writes no new events.
     expect((await log.read(workflowRunStream(def.id, 'r_done'))).length).toBe(before);
+  });
+});
+
+// T6 — deterministic runId from (workflowId, source, time-bucket,
+// payload). Same tuple → same runId so rapid schedule firings dedupe
+// via the first-append gate; different tuples diverge.
+describe('deterministicRunId (T6)', () => {
+  const payload = { has_orders: 'true' };
+  const at = instant('2026-04-21T13:47:00Z');
+
+  it('is stable for the same tuple', () => {
+    const a = deterministicRunId('wf-x', 'manual', at, payload);
+    const b = deterministicRunId('wf-x', 'manual', at, payload);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^run_[0-9a-f]{8}$/);
+  });
+
+  it('differs when the workflowId differs', () => {
+    expect(deterministicRunId('wf-a', 's', at, payload)).not.toBe(
+      deterministicRunId('wf-b', 's', at, payload)
+    );
+  });
+
+  it('differs when the payload differs', () => {
+    expect(deterministicRunId('wf-x', 's', at, { a: 1 })).not.toBe(
+      deterministicRunId('wf-x', 's', at, { a: 2 })
+    );
+  });
+
+  it('is stable within a bucket, changes across buckets', () => {
+    const t1 = instant('2026-04-21T13:47:00Z');
+    const t2 = instant('2026-04-21T13:47:45Z'); // same 60s bucket
+    const t3 = instant('2026-04-21T13:48:05Z'); // next bucket
+    expect(deterministicRunId('wf', 's', t1, payload)).toBe(
+      deterministicRunId('wf', 's', t2, payload)
+    );
+    expect(deterministicRunId('wf', 's', t1, payload)).not.toBe(
+      deterministicRunId('wf', 's', t3, payload)
+    );
+  });
+
+  it('key order in payload does not perturb the hash', () => {
+    const a = deterministicRunId('wf', 's', at, { a: 1, b: 2 });
+    const b = deterministicRunId('wf', 's', at, { b: 2, a: 1 });
+    expect(a).toBe(b);
+  });
+
+  it('same runId + run() twice produces one run_started on the wire (T6 × T7)', async () => {
+    const log = new InMemoryEventLog();
+    const def: WorkflowDefinition = {
+      id: 'wf-det',
+      name: 't',
+      version: 1,
+      description: '',
+      retry: DEFAULT_RETRY,
+      steps: [
+        { kind: 'trigger', source: 'manual', label: 'go' },
+        { kind: 'end', label: 'done', disposition: 'queued' },
+      ],
+    };
+    _setNowForTests(() => instant('2026-04-21T13:47:15Z'));
+    const runId1 = deterministicRunId(def.id, 'manual', instant('2026-04-21T13:47:15Z'), {});
+    const runId2 = deterministicRunId(def.id, 'manual', instant('2026-04-21T13:47:40Z'), {});
+    expect(runId1).toBe(runId2); // same bucket
+    const [a, b] = await Promise.all([
+      run(def, { input: {}, runId: runId1 }, log),
+      run(def, { input: {}, runId: runId2 }, log),
+    ]);
+    expect(a.disposition).toBe('queued');
+    expect(b.disposition).toBe('queued');
+    const stored = await log.read(workflowRunStream(def.id, runId1));
+    expect(stored.filter((e) => e.payload.kind === 'workflow.run_started')).toHaveLength(1);
+    _resetNowForTests();
   });
 });
