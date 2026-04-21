@@ -155,7 +155,7 @@ jobs:
         run: npm sbom --sbom-format=spdx --omit=dev > sbom.spdx.json
 
       - name: Upload dist + sbom
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-${{ github.sha }}
           path: |
@@ -203,7 +203,7 @@ jobs:
 
       - name: Smoke + a11y
         run: npx playwright test --project=${{ matrix.project }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-${{ matrix.project }}-${{ github.run_id }}
@@ -238,7 +238,7 @@ jobs:
 
       - name: Pixel diff against baselines
         run: npm run test:visual
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: visual-diffs-${{ github.run_id }}
