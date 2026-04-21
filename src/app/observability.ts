@@ -21,7 +21,7 @@
 
 import { onCLS, onFCP, onINP, onLCP, onTTFB, type Metric } from 'web-vitals';
 
-import { track } from './telemetry';
+import { track, redactProps } from './telemetry';
 
 interface InitOptions {
   release?: string;
@@ -90,10 +90,13 @@ export async function initObservability(opts: InitOptions = {}): Promise<void> {
     tracesSampleRate: environment === 'production' ? 0.1 : 1.0,
     sendDefaultPii: false,
     beforeSend(event) {
+      // Reuse the telemetry allowlist so Sentry's breadcrumb scrub and
+      // the `/telemetry` flush agree on what's safe. Two separate
+      // redaction lists drift — the allowlist is the single source.
       if (event.breadcrumbs) {
         event.breadcrumbs = event.breadcrumbs.map((b) => ({
           ...b,
-          data: b.data ? redact(b.data) : b.data,
+          data: b.data ? redactProps(b.data) : b.data,
         }));
       }
       return event;
@@ -126,13 +129,4 @@ export function startSpan<T>(
   cb: () => T | Promise<T>
 ): T | Promise<T> {
   return _startSpan(ctx, cb);
-}
-
-const PII_KEYS = new Set(['email', 'phone', 'name', 'address']);
-function redact(data: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(data)) {
-    out[k] = PII_KEYS.has(k) ? '[redacted]' : v;
-  }
-  return out;
 }

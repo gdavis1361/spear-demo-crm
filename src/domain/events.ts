@@ -440,6 +440,26 @@ export function _resetDbConnectionForTests(): void {
   dbPromise = null;
 }
 
+/**
+ * Close the cached IDB connection, if one is open. Used by the
+ * user-initiated erase-all-local-state flow (TB3): `deleteDatabase`
+ * blocks indefinitely on open connections, so callers close first,
+ * then delete.
+ *
+ * Idempotent + safe on connections that never opened (fresh tab,
+ * SSR probe). Callers should not assume the handle is usable after.
+ */
+export async function closeDbConnection(): Promise<void> {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    db.close();
+  } catch {
+    // Open failed earlier — nothing to close.
+  }
+  dbPromise = null;
+}
+
 /** Test-only: reset DB_NAME + cached connection. Used by isolation tests. */
 export function _setDbNameForTests(name: string): void {
   _resetDbNameForTests(name);

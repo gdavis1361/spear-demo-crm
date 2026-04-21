@@ -34,6 +34,22 @@ export interface RetentionPolicy {
    * deleted run would look neither complete nor active, just broken.
    */
   readonly completionKinds?: readonly string[];
+  /**
+   * TB7 — per-kind retention. If set, only events whose `payload.kind`
+   * is in this set are eligible for per-event eviction. Other kinds in
+   * the same prefix stream are untouched. Lets a policy trim
+   * PII-bearing payload kinds (`account.message_sent.body`,
+   * `account.message_received.body`, `deal.quote_sent.quoteText`)
+   * without also deleting the structural events that reconstruct the
+   * account (signal_fired, meeting_held, file_uploaded, etc.).
+   *
+   * Independent of `completionKinds`: a policy can have both, but the
+   * common case is one OR the other. When both are set, the per-event
+   * kind filter is applied BEFORE the completion-anchored check, so
+   * streams with no completion marker still get their PII bodies
+   * trimmed.
+   */
+  readonly perEventKinds?: readonly string[];
 }
 
 export const DEFAULT_POLICIES: readonly RetentionPolicy[] = [
@@ -46,6 +62,33 @@ export const DEFAULT_POLICIES: readonly RetentionPolicy[] = [
     prefix: 'workflow:',
     ttlMs: 30 * 24 * 60 * 60 * 1000,
     completionKinds: ['workflow.run_completed'],
+  },
+  {
+    // TB7 compensating control. Account streams hold PII-bearing
+    // message bodies (`account.message_sent.body`,
+    // `account.message_received.body`) AND structural events
+    // (signal_fired, meeting_held, file_uploaded, claim_resolved)
+    // that reconstruct deal history. 90 days keeps the body inside
+    // the window a rep realistically needs to re-read a
+    // conversation; beyond that, the metadata survives but the body
+    // drops.
+    //
+    // Quote text is also included. Quotes older than 90d are either
+    // signed (and reified elsewhere) or superseded by a newer quote;
+    // the durable body text stops carrying business value.
+    //
+    // Deliberately does NOT include:
+    //   - signal_fired, meeting_held, file_uploaded, claim_resolved
+    //     (no free-text body)
+    //   - deal.advanced / deal.reverted (stage transitions, no PII)
+    prefix: 'account:',
+    ttlMs: 90 * 24 * 60 * 60 * 1000,
+    perEventKinds: ['account.message_sent', 'account.message_received'],
+  },
+  {
+    prefix: 'deal:',
+    ttlMs: 90 * 24 * 60 * 60 * 1000,
+    perEventKinds: ['deal.quote_sent'],
   },
 ];
 
@@ -75,9 +118,17 @@ export async function vacuumOnce(
     return vacuumStreamAnchored(policy, events, cutoff, deleter);
   }
 
+  // TB7 — per-kind filter. Only events whose kind is listed are
+  // eligible. The `scanned` count still reports the full read so
+  // operators can see policy reach; `deleted` reports only the
+  // kind-matched subset.
+  const kindFilter =
+    policy.perEventKinds && policy.perEventKinds.length > 0 ? new Set(policy.perEventKinds) : null;
+
   const expired: string[] = [];
   let oldestKept: string | undefined;
   for (const e of events) {
+    if (kindFilter && !kindFilter.has(e.payload.kind)) continue;
     const ts = eventTimestamp(e);
     if (ts < cutoff) expired.push(e.id);
     else if (!oldestKept) oldestKept = e.id;

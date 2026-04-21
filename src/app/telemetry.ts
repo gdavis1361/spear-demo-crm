@@ -258,27 +258,107 @@ const sessionId =
 const buffer: EnvelopeEntry[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-// PII fields we redact before sending. Keep this conservative — it's better
-// to over-redact than leak. H9 extends the original {email, phone, name,
-// address} with the human-readable title fields our event types carry
-// (`title`, `customer`, `dealTitle`, `headline`) — those often carry an
-// account name or person's full name and leaking them would defeat the
-// `sendDefaultPii: false` guarantee upstream in Sentry.
-const PII_KEYS = new Set([
-  'email',
-  'phone',
-  'name',
-  'address',
+// Telemetry-safe string keys — an **allowlist** (TB2). Every string value
+// whose key is NOT in this set is replaced with `[redacted]` before the
+// envelope hits the buffer. Numbers, booleans, null, and nested objects
+// pass through as-is (we don't carry user-authored structured data in
+// telemetry today; if that changes, this function has to grow a
+// recursion step).
+//
+// Why allowlist, not denylist (TB2): the previous PII_KEYS denylist
+// covered `email/phone/name/address/title/customer/dealTitle/headline`.
+// Every new `TrackEvent` variant added to the catalogue above is a
+// chance to land a PII-bearing string under a key nobody thinks to add
+// to the denylist — `message`, `reason`, `note`, `body`, `subject`,
+// `description`, `comment`, `quoteText`, `text`. The denylist shape
+// degrades silently; allowlist fails closed. A new event with a
+// non-allowlisted string key will ship with that value replaced by
+// `[redacted]` until someone explicitly opts the key into the safe set.
+//
+// How to grow the list: add a key ONLY when you've verified its value
+// type is one of (a) a literal enum drawn from a finite union in the
+// TrackEvent type, (b) a branded ID (`dealId`, `runId`, `opKey`), (c) a
+// template identifier with a fixed charset, or (d) a stream key. Free
+// text — error messages, user notes, quarantine reasons, verb templates
+// that could carry interpolated data — does NOT belong here.
+const SAFE_STRING_KEYS: ReadonlySet<string> = new Set([
+  // Enum-valued (always safe: finite literal unions in TrackEvent)
+  'ground',
+  'density',
+  'stage',
+  'trigger',
+  'method',
+  'from',
+  'to',
+  'kind',
+  'metric',
+  'rating',
+  'navigationType',
+  'status',
+  'disposition',
+  'verb',
+  'clockMode',
+  'nounKind',
+  'code', // ErrorCode literal union
+  // Identifiers — branded / charset-validated
+  'id',
+  'dealId',
+  'runId',
+  'opKey',
+  'requestId',
+  'workflowId',
+  'stream',
+  'sessionId',
+  'release',
+  // Scenario + template identifiers — validated charset upstream
+  'template',
+  'scenario',
+  'layers',
+  // baseContext envelope dimensions (always safe — none carry user text)
+  'role',
+  'screen',
+  'viewport',
+  'seed',
+]);
+
+/**
+ * Known free-text fields — explicitly redacted at the `[redacted]`
+ * sentinel. Listed so a grep for this constant surfaces the exact
+ * "what's redacted" contract the allowlist enforces. Not load-bearing;
+ * the allowlist above is authoritative. Keep this in sync when adding
+ * new event variants that carry free text.
+ */
+export const KNOWN_FREE_TEXT_KEYS: ReadonlyArray<string> = [
+  'message',
+  'reason',
+  'body',
+  'note',
+  'subject',
+  'description',
+  'comment',
+  'quoteText',
+  'text',
   'title',
   'customer',
   'dealTitle',
   'headline',
-]);
+  'name',
+  'email',
+  'phone',
+  'address',
+];
 
-function redactProps(props: Record<string, unknown>): Record<string, unknown> {
+export function redactProps(props: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(props)) {
-    out[k] = PII_KEYS.has(k) ? '[redacted]' : v;
+    if (typeof v === 'string') {
+      out[k] = SAFE_STRING_KEYS.has(k) ? v : '[redacted]';
+      continue;
+    }
+    // Non-string primitives + null pass through. Arrays/objects would
+    // require recursion; today the TrackEvent catalogue carries none.
+    // If that changes, add a recursion step with depth-limit here.
+    out[k] = v;
   }
   return out;
 }
@@ -345,7 +425,7 @@ export function flush(sync = false): void {
     // refuses (payload too large, closed connection), fall through to
     // persist so the events survive pagehide → next boot.
     const blob = new Blob([payload], { type: 'application/json' });
-    const queued = navigator.sendBeacon('/telemetry', blob);
+    const queued = navigator.sendBeacon('/api/telemetry', blob);
     if (!queued) {
       void persistBatch(payload);
     }
@@ -353,7 +433,7 @@ export function flush(sync = false): void {
   }
 
   // Dev default: log to console so the schema is visible in the network tab.
-  // Real app would POST to '/telemetry' via the API client.
+  // Real app would POST to '/api/telemetry' via the API client.
   if (import.meta.env.DEV) {
     console.debug('[telemetry]', JSON.parse(payload));
     return;
@@ -364,7 +444,7 @@ export function flush(sync = false): void {
   // outlive a page transition; `.catch` now writes durably instead of
   // silently dropping — the most valuable telemetry is the telemetry
   // you can't get after the fact.
-  void fetch('/telemetry', {
+  void fetch('/api/telemetry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: payload,
@@ -395,7 +475,7 @@ export async function drainPersistedTelemetry(): Promise<void> {
   if (rows.length === 0) return;
   for (const row of rows) {
     try {
-      const res = await fetch('/telemetry', {
+      const res = await fetch('/api/telemetry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: row.payload,
