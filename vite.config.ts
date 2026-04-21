@@ -18,17 +18,27 @@ export default defineConfig(({ mode }) => {
       sourcemap: true,
       rollupOptions: {
         output: {
-          // Pin the seeds + Zod lazy chunk to a stable `schemas-*.js`
-          // filename so `size-limit` thresholds stay meaningful across
-          // refactors. Without this, Rollup sometimes names it
-          // `index-*.js` when a new dynamic importer lands, which
-          // collides with the entry chunk glob and inflates the
-          // measured initial-bundle size.
-          manualChunks(id) {
-            if (id.includes('/src/seeds/') || id.includes('/node_modules/zod/')) {
-              return 'schemas';
-            }
-            return undefined;
+          // Name lazy chunks `lazy-*.js` instead of Rollup's default
+          // `index-*.js`. Two motivations:
+          //
+          //   1. `size-limit`'s entry-chunk glob is `dist/assets/index-*.js`.
+          //      When a new dynamic import lands whose name Rollup derives
+          //      from an `index.ts` file (e.g. `import('./seeds')` picks
+          //      up `src/seeds/index.ts`), the resulting chunk also gets
+          //      named `index-*.js` and quietly double-counts into the
+          //      entry-chunk budget.
+          //   2. It keeps the dist/ listing scannable: entry vs. lazy is
+          //      obvious from the filename without diffing hashes.
+          //
+          // Static `manualChunks` grouping was considered and rejected —
+          // it forces Rollup to emit a sibling chunk for the entry when
+          // any symbol (e.g. a Zod helper) is reachable from both the
+          // entry and a lazy path, which adds a `<link rel="modulepreload">`
+          // that eagerly loads the "lazy" chunk. That defeats PR #31's
+          // whole-point lazy-seeds discipline.
+          chunkFileNames(chunk) {
+            const fromIndex = chunk.name === 'index';
+            return fromIndex ? 'assets/lazy-[hash].js' : 'assets/[name]-[hash].js';
           },
         },
       },

@@ -14,8 +14,8 @@
     "brotli": false
   },
   {
-    "name": "schemas chunk · Zod + seeds, lazy",
-    "path": "dist/assets/schemas-*.js",
+    "name": "lazy seeds chunk · scenarios + Zod, dev-palette only",
+    "path": "dist/assets/lazy-*.js",
     "limit": "30 KB",
     "gzip": true,
     "brotli": false
