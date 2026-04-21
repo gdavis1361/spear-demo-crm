@@ -39,7 +39,7 @@ jobs:
       # TODO(codecov): drop `continue-on-error` once CODECOV_TOKEN is configured
       # in repo secrets and the first upload succeeds.
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           fail_ci_if_error: false
           files: coverage/lcov.info
