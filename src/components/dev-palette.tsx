@@ -88,7 +88,12 @@ export function DevPalette(): React.ReactElement | null {
     first?.focus();
   }, [open, scenarios]);
 
-  // Full list = [Exit] + scenarios. Index 0 is always "Exit scenario".
+  // Full list = [Exit] + scenarios + [Erase]. Erase lives at the
+  // bottom so cursor users can't brush it on the way to a scenario.
+  // TB3: user-triggered "forget me" affordance. Anchored in the dev
+  // palette because the app has no Settings screen yet — when one
+  // ships this option should move to Settings → Privacy and disappear
+  // from the scenario switcher.
   const items = React.useMemo(() => {
     const s = scenarios ?? [];
     return [
@@ -101,12 +106,37 @@ export function DevPalette(): React.ReactElement | null {
         href: `/?seed=${sc.name}`,
         isCurrent: current === sc.name,
       })),
+      {
+        kind: 'erase' as const,
+        label: '⚠ Erase ALL local data',
+        description: 'Deletes every IndexedDB + clears spear:* storage. Requires confirmation.',
+      },
     ];
   }, [scenarios, current]);
 
   const navigate = (href: string): void => {
     window.location.href = href;
   };
+
+  const performErase = React.useCallback(async () => {
+    // Two-step: confirm first, then tear down. The confirm() blocks on
+    // UI so any in-flight outbox/ticker drains before erase runs.
+    const ok =
+      typeof window !== 'undefined' &&
+      window.confirm(
+        'This deletes ALL local Spear data (event log, promises, outbox, telemetry buffer) across every scenario. This cannot be undone. Continue?'
+      );
+    if (!ok) return;
+    try {
+      const mod = await import('../app/erase');
+      await mod.eraseAllLocalState();
+    } catch (err) {
+      console.error('[dev-palette] erase failed', err);
+    }
+    // Force a clean boot. Landing on `/` drops any `?seed=` and the
+    // fresh app spins up against an empty IDB.
+    window.location.href = '/';
+  }, []);
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'ArrowDown') {
@@ -118,7 +148,12 @@ export function DevPalette(): React.ReactElement | null {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const it = items[selIdx];
-      if (it) navigate(it.href);
+      if (!it) return;
+      if (it.kind === 'erase') {
+        void performErase();
+      } else {
+        navigate(it.href);
+      }
     }
   };
 
@@ -174,10 +209,17 @@ export function DevPalette(): React.ReactElement | null {
                   tabIndex={selected ? 0 : -1}
                   data-devp-item
                   data-current={isCurrent ? 'true' : undefined}
-                  className={`devp-item${selected ? ' on' : ''}${isCurrent ? ' current' : ''}`}
+                  data-kind={it.kind}
+                  className={`devp-item${selected ? ' on' : ''}${isCurrent ? ' current' : ''}${it.kind === 'erase' ? ' devp-item--danger' : ''}`}
                   onMouseEnter={() => setSelIdx(i)}
                   onFocus={() => setSelIdx(i)}
-                  onClick={() => navigate(it.href)}
+                  onClick={() => {
+                    if (it.kind === 'erase') {
+                      void performErase();
+                    } else {
+                      navigate(it.href);
+                    }
+                  }}
                 >
                   <span className="devp-item__name">
                     {it.label}
@@ -187,7 +229,7 @@ export function DevPalette(): React.ReactElement | null {
                       </span>
                     )}
                   </span>
-                  {it.kind === 'scenario' && (
+                  {(it.kind === 'scenario' || it.kind === 'erase') && (
                     <span className="devp-item__desc">{it.description}</span>
                   )}
                 </button>
