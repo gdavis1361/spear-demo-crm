@@ -61,7 +61,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.11.1",
+    "@axe-core/playwright": "^4.11.2",
     "@commitlint/cli": "^19.8.1",
     "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^10.0.1",
