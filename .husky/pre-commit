@@ -1,1 +1,14 @@
-npx lint-staged
+# Check-only mode (G5): staged files are validated, never rewritten.
+# A contributor's staged diff is exactly what lands in the commit —
+# `git add -p` hunks are never silently expanded by a formatter.
+#
+# If this hook fails, the message below tells the user the escape hatch.
+if ! npx lint-staged; then
+  echo ""
+  echo "✖ Staged files failed lint/format checks."
+  echo ""
+  echo "  Auto-fix with:   npm run format && npm run lint:fix"
+  echo "  Then re-stage:   git add -u && git commit"
+  echo ""
+  exit 1
+fi

@@ -30,6 +30,30 @@ npm run typecheck && npm run lint && npm test && npm run build
 npm run test:e2e && npm run test:visual
 ```
 
+## CI checks that must pass
+
+<!--
+The local command above covers typecheck / lint / unit / build. Branch
+protection additionally requires these CI jobs (they don't all have a
+local one-liner). See docs/architecture.md § Gates for the full gate
+matrix.
+-->
+
+<details>
+<summary>7 required status checks</summary>
+
+| Check                             | What it gates                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `typecheck · lint · unit · build` | `tsc --noEmit`, `eslint src`, vitest + coverage thresholds, `vite build`, `npm run size` |
+| `e2e (chromium-smoke)`            | Playwright smoke + `axe` a11y on Chromium                                                |
+| `e2e (firefox-smoke)`             | Same smoke suite on Firefox                                                              |
+| `e2e (webkit-smoke)`              | Same smoke suite on WebKit                                                               |
+| `visual regression (chromium)`    | Pixel-diff against committed baselines (`tests/visual/**/*-snapshots/*-linux.png`)       |
+| `supply chain`                    | `npm audit signatures` + `npm audit --audit-level=high`                                  |
+| `analyze (javascript-typescript)` | CodeQL `security-extended` queries                                                       |
+
+</details>
+
 ## Screenshots / videos
 
 <!-- For UI changes. Drag and drop into the PR; include before + after if applicable. -->

@@ -8,7 +8,10 @@ export default defineConfig({
     exclude: ['tests/**', 'node_modules/**', 'dist/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html'],
+      // `json-summary` is the shape `ci.yml → coverage summary comment`
+      // consumes — a compact aggregate we post to PRs. `text` stays for
+      // local stdout; `html` stays for `coverage/index.html` drill-down.
+      reporter: ['text', 'html', 'json-summary'],
       // Primitives + domain are the contract — cover them at a high bar.
       // API client + app state are tested via integration (MSW + Playwright).
       include: ['src/lib/**/*.ts', 'src/domain/**/*.ts'],

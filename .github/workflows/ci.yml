@@ -12,11 +12,21 @@ concurrency:
 
 permissions:
   contents: read
+  # G4: the build job's "Coverage summary comment" step creates/updates
+  # a PR comment via actions/github-script. Scoped to the workflow, not
+  # individual jobs, so the principle-of-least-privilege surface is one
+  # grep away.
+  pull-requests: write
 
 jobs:
   build:
     name: typecheck · lint · unit · build
     runs-on: ubuntu-latest
+    # GitHub's default job timeout is 6h — long enough to burn a runner on
+    # a stuck npm install or vitest hang without signal. Empirical wallclock
+    # for this job is ~1 min; 15m is generous enough for a cold npm cache
+    # and a slower runner pool on busy days.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -36,14 +46,69 @@ jobs:
       - name: Unit tests with coverage
         run: npm run test:cov -- --reporter=verbose
 
-      # TODO(codecov): drop `continue-on-error` once CODECOV_TOKEN is configured
-      # in repo secrets and the first upload succeeds.
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+      # G4: replace the always-green Codecov step with a self-contained
+      # coverage summary posted as a PR comment. Reads
+      # `coverage/coverage-summary.json` (enabled by the `json-summary`
+      # reporter in `vitest.config.ts`), compares aggregate %s to the
+      # thresholds declared there, and posts/updates a single comment
+      # per PR. No external service, no token, no `continue-on-error`
+      # masking a silent failure.
+      - name: Coverage summary comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
-          fail_ci_if_error: false
-          files: coverage/lcov.info
-        continue-on-error: true
+          script: |
+            const fs = require('fs');
+            const path = 'coverage/coverage-summary.json';
+            if (!fs.existsSync(path)) {
+              core.warning('coverage-summary.json not found — skipping PR comment');
+              return;
+            }
+            const summary = JSON.parse(fs.readFileSync(path, 'utf8')).total;
+            // Mirror the thresholds from vitest.config.ts. When they move
+            // there, move them here.
+            const thresholds = { lines: 75, functions: 65, branches: 60, statements: 75 };
+            const metrics = ['lines', 'statements', 'functions', 'branches'];
+            const rows = metrics.map((m) => {
+              const pct = summary[m].pct;
+              const pass = pct >= thresholds[m];
+              return `| ${m} | ${pct.toFixed(2)}% | ${thresholds[m]}% | ${pass ? 'ok' : 'below'} |`;
+            });
+            const body = [
+              '### Coverage summary',
+              '',
+              '| metric | current | threshold | status |',
+              '| --- | ---: | ---: | :---: |',
+              ...rows,
+              '',
+              '<sub>Reporter: `vitest --coverage` · Thresholds: `vitest.config.ts`</sub>',
+            ].join('\n');
+
+            // One comment per PR, updated in place. Saves a scroll on
+            // long PRs and keeps history on the comment itself.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) =>
+              c.user.type === 'Bot' && c.body.startsWith('### Coverage summary')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
 
       - name: Build
         run: npm run build
@@ -67,6 +132,10 @@ jobs:
   e2e:
     name: e2e (${{ matrix.project }})
     runs-on: ubuntu-latest
+    # Each matrix leg is ~1.5 min; 20m covers a cold Playwright browser
+    # install (~2 min) plus retries up to the configured ceiling without
+    # falling through to the platform-default 6h.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -111,6 +180,7 @@ jobs:
   visual:
     name: visual regression (chromium)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -145,6 +215,7 @@ jobs:
   audit:
     name: supply chain
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4

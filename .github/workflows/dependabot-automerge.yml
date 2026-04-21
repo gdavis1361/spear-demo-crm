@@ -1,0 +1,91 @@
+name: dependabot-automerge
+
+# Auto-approves + auto-merges Dependabot PRs that are low-risk:
+#   - update-type is patch or minor
+#   - dependency is in one of the allowlisted groups (lint-format, test,
+#     typescript, build) OR is a github-actions update
+#
+# React, Vite majors, Zod (ontology), and any unlisted dep stay manual —
+# rationale mirrors the `ignore:` list in .github/dependabot.yml.
+#
+# Why: Dependabot's weekly Monday run currently produces 5-10 PRs that
+# each require a click. On a solo-owner repo this is pure tax; the owner
+# rubber-stamps them all. Batch fatigue eventually causes PRs to rot and
+# masks real security updates.
+#
+# Safety: auto-merge doesn't bypass branch protection. Required status
+# checks still have to go green before the squash-merge fires. If CI
+# fails, the PR sits there like any other. If the bump breaks something
+# the test suite covers, we find out in CI, not prod.
+
+on:
+  pull_request:
+    # `opened` covers the initial Dependabot run; `synchronize` covers
+    # rebase-after-green; `reopened` covers manual reopens.
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    # Gate on actor first so nothing below runs for human PRs.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide
+        id: decide
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          set -euo pipefail
+          # Patch + minor in allowlisted groups, OR any github-actions bump.
+          # Majors ALWAYS stay manual regardless of group — the `ignore:`
+          # list in dependabot.yml filters the truly-dangerous ones, but
+          # we double-gate here so a new major (e.g. zod) is never auto-merged.
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor) safe_semver=1 ;;
+            *) safe_semver=0 ;;
+          esac
+
+          case "$DEP_GROUP" in
+            lint-format|test|typescript|build) in_allowlist=1 ;;
+            *) in_allowlist=0 ;;
+          esac
+
+          if [ "$ECOSYSTEM" = "github-actions" ]; then
+            eligible=1
+          elif [ "$safe_semver" = "1" ] && [ "$in_allowlist" = "1" ]; then
+            eligible=1
+          else
+            eligible=0
+          fi
+
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "Decision: ecosystem=$ECOSYSTEM group=$DEP_GROUP update=$UPDATE_TYPE → eligible=$eligible"
+
+      - name: Approve
+        if: steps.decide.outputs.eligible == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr review --approve "$PR_URL" --body "Auto-approved by dependabot-automerge (allowlisted group, patch/minor)."
+
+      - name: Enable auto-merge
+        if: steps.decide.outputs.eligible == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        # `--auto` queues the merge behind required checks; branch
+        # protection still has final say.
+        run: gh pr merge --squash --auto "$PR_URL"

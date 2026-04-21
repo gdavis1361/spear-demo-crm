@@ -21,6 +21,11 @@ on:
 permissions:
   contents: read
   actions: write # needed to dispatch deploy workflow on rollback
+  # G8: on sustained failure we also open/update a GitHub issue so the
+  # team finds out about an auto-rollback within seconds instead of the
+  # next morning. Watchers get email + mobile notifications; no Slack
+  # dependency required.
+  issues: write
 
 concurrency:
   group: synthetics
@@ -30,10 +35,15 @@ jobs:
   probe:
     name: synthetic smoke (production)
     runs-on: ubuntu-latest
+    # The probe fires every 5 min; a job that hangs past the cadence starts
+    # overlapping itself and the `concurrency: cancel-in-progress: true`
+    # rule will keep cancelling new runs. 5 min is the hard ceiling: if
+    # the probe takes longer than the cadence, something is already wrong.
+    timeout-minutes: 5
     outputs:
       conclusion: ${{ job.status }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
@@ -80,10 +90,12 @@ jobs:
   rollback-on-sustained-failure:
     # Dispatches a redeploy of the most recent tagged release when this run
     # AND the two prior runs all failed — the "3 consecutive failures" rule.
-    name: rollback if 3 consecutive failures
+    # Also opens / updates a GitHub issue so humans are notified (G8).
+    name: rollback + notify (3 consecutive failures)
     needs: probe
     if: failure()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check recent synthetic history
         id: history
@@ -105,8 +117,111 @@ jobs:
             core.setOutput('should_rollback', String(priorBothFailed));
             core.info(`Prior conclusions: ${recent.map(r => r.conclusion).join(', ')} — this run failed, rollback=${priorBothFailed}`);
 
-      - name: Dispatch rollback
+      - name: Cool-down check (G8)
+        id: cooldown
         if: steps.history.outputs.should_rollback == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Refuse to auto-dispatch if the previous deploy run was
+            // itself a rollback dispatched within the last 30 minutes.
+            // Prevents runaway rollback loops: if root-cause isn't
+            // fixed, every subsequent probe would otherwise fire another
+            // rollback against already-reverting infrastructure.
+            //
+            // We detect a prior rollback by checking deploy.yml runs
+            // triggered by `workflow_dispatch` (rollbacks) vs `push`
+            // (normal merges).
+            const COOLDOWN_MINUTES = 30;
+            const since = new Date(Date.now() - COOLDOWN_MINUTES * 60_000).toISOString();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              event: 'workflow_dispatch',
+              per_page: 5,
+              created: `>=${since}`,
+            });
+            const recentRollback = data.workflow_runs[0];
+            const inCooldown = Boolean(recentRollback);
+            core.setOutput('in_cooldown', String(inCooldown));
+            if (inCooldown) {
+              core.warning(
+                `Cool-down active: recent rollback at ${recentRollback.created_at} ` +
+                `(${recentRollback.html_url}). Skipping auto-dispatch; filing issue for human review.`
+              );
+            }
+
+      - name: Open / update incident issue (G8)
+        if: steps.history.outputs.should_rollback == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // One canonical incident issue, updated on every run while
+            // the incident is active. Closed manually once root cause
+            // ships. The issue is the team's notification channel —
+            // watchers get email + mobile, no Slack secret needed.
+            const { data: mainBranch } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: 'main',
+            });
+            const brokenSha = mainBranch.commit.sha;
+            const cooldown = '${{ steps.cooldown.outputs.in_cooldown }}' === 'true';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const title = `Auto-rollback: synthetic probe failing on main (${brokenSha.slice(0, 7)})`;
+            const body = [
+              '### Sustained synthetic failure',
+              '',
+              `- **Broken SHA:** \`${brokenSha}\``,
+              `- **Probe run:** ${runUrl}`,
+              `- **Cool-down active:** ${cooldown ? 'yes — rollback SKIPPED, human review required' : 'no — rollback dispatched'}`,
+              '',
+              '### What to do',
+              '',
+              '1. Click the probe run above and review `playwright-report/` artifacts.',
+              '2. If the rollback succeeds, open a fix PR against main and close this issue when the fix ships.',
+              '3. If cool-down blocked rollback, decide: manually dispatch `deploy.yml` with a known-good SHA, or ship a forward-fix.',
+              '',
+              '<sub>Opened by `synthetics.yml → rollback + notify`. Updated on every sustained-failure run while open.</sub>',
+            ].join('\n');
+
+            // Look for an existing open incident issue (label + title prefix).
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'incident,auto-rollback',
+              per_page: 5,
+            });
+            const existing = open.find((i) => i.title.startsWith('Auto-rollback:'));
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Another sustained failure on \`${brokenSha.slice(0, 7)}\` — probe run: ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['incident', 'auto-rollback'],
+              });
+            }
+
+      - name: Dispatch rollback
+        if: steps.history.outputs.should_rollback == 'true' && steps.cooldown.outputs.in_cooldown != 'true'
         uses: actions/github-script@v7
         with:
           script: |
