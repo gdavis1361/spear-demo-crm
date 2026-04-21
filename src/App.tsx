@@ -7,6 +7,8 @@ import { LiveRegionProvider } from './lib/live-region';
 import { AppProvider } from './app/context';
 import { readJson, readString, writeJson, writeString } from './app/state';
 import { track } from './app/telemetry';
+import { setRole as setAmbientRole, setScreen as setAmbientScreen } from './app/ambient';
+import { setTag } from './app/observability';
 import type { Screen, Role, Tweaks as TweaksState } from './lib/types';
 
 const TWEAK_DEFAULTS: TweaksState = {
@@ -107,9 +109,16 @@ export function App() {
 
   React.useEffect(() => {
     writeString('screen', screen);
+    // Mirror screen into the ambient module so non-React telemetry
+    // callers (schedules, observability, workflow-runner) can read it
+    // via `baseContext()` without needing hook access.
+    setAmbientScreen(screen);
+    setTag('screen', screen);
   }, [screen]);
   React.useEffect(() => {
     writeString('role', role);
+    setAmbientRole(role);
+    setTag('role', role);
   }, [role]);
   React.useEffect(() => {
     document.documentElement.setAttribute('data-ground', t.ground);

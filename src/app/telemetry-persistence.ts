@@ -47,6 +47,14 @@ export interface PersistedBatch {
 }
 
 const MAX_ROWS = 500;
+/**
+ * H10: hard age ceiling for persisted telemetry batches. MAX_ROWS alone
+ * can let a stalled row survive for months on a low-traffic tab. Events
+ * older than this are dropped by `trimRing()` even if the cap isn't
+ * reached. 7 days is long enough to replay Monday's crash on Tuesday
+ * morning, short enough that a stuck IDB doesn't accumulate indefinitely.
+ */
+const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function persistBatch(payload: string): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
@@ -118,12 +126,42 @@ export async function bumpAttempt(row: PersistedBatch): Promise<void> {
   }
 }
 
-async function trimRing(): Promise<void> {
+async function trimRing(now: number = Date.now()): Promise<void> {
   const rows = await readPersistedBatches();
-  if (rows.length <= MAX_ROWS) return;
-  const sorted = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const excess = sorted.slice(0, rows.length - MAX_ROWS);
-  for (const r of excess) await deleteBatch(r.id);
+  // Two passes — age first, then count — because evicting stale rows can
+  // push us back under MAX_ROWS and spare newer batches that a pure
+  // count-based trim would otherwise throw away.
+  const doomed = new Set<string>();
+  for (const r of rows) {
+    const ageMs = now - new Date(r.createdAt).getTime();
+    if (ageMs > STALE_THRESHOLD_MS) doomed.add(r.id);
+  }
+  const survivors = rows.filter((r) => !doomed.has(r.id));
+  if (survivors.length > MAX_ROWS) {
+    const sorted = [...survivors].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const excess = sorted.slice(0, survivors.length - MAX_ROWS);
+    for (const r of excess) doomed.add(r.id);
+  }
+  for (const id of doomed) await deleteBatch(id);
+}
+
+/**
+ * Runs the ring-trim sweep once. Called at boot from
+ * `drainPersistedTelemetry()` so a cold start with dormant rows still
+ * gets the TTL applied, not just one that sees a new write.
+ */
+export async function sweepStaleBatches(): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  try {
+    await trimRing();
+  } catch {
+    // Telemetry must never break boot. Silent-drop keeps the invariant.
+  }
+}
+
+/** Test hook: expose trimRing so callers can assert TTL with an injected now. */
+export async function _trimRingForTests(now: number): Promise<void> {
+  await trimRing(now);
 }
 
 /** Test hook: hard-wipe the store. */

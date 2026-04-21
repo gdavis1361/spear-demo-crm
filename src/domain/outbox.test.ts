@@ -377,6 +377,45 @@ describe('Outbox', () => {
     expect(successes[0].attempts).toBe(2);
   });
 
+  it('H1+H3: onSuccess receives opKey + enqueue\u2192confirm ms', async () => {
+    // Honeycomb-lens wiring: the success subscriber gets `(mutation,
+    // attempts, requestId, ms, opKey)`. Screens use `opKey` to correlate
+    // their `pipeline.card_moved` with the outbox's
+    // `mutation_succeeded` + their own `card_moved_confirmed` in a
+    // single trace; `ms` restores the pre-outbox inline latency signal.
+    let fakeNow = 1_000_000;
+    const dispatchers: DispatcherRegistry = {
+      advance_deal: {
+        dispatch: async () => {
+          fakeNow += 250;
+          return { ok: true, requestId: 'req_h1h3' };
+        },
+      },
+      dismiss_signal: { dispatch: async () => ({ ok: true }) },
+      action_signal: { dispatch: async () => ({ ok: true }) },
+    } as unknown as DispatcherRegistry;
+    outbox = new Outbox(dispatchers, { now: () => fakeNow });
+
+    type Capture = { requestId: string | undefined; ms: number; opKey: string };
+    const captures: Capture[] = [];
+    outbox.onSuccess((_m, _attempts, requestId, ms, opKey) =>
+      captures.push({ requestId, ms, opKey })
+    );
+
+    await outbox.enqueue(
+      { kind: 'advance_deal', dealId: 'deal_h1h3', toStage: 'quote', fromStage: 'scoping' },
+      'op_h1h3'
+    );
+    await outbox.drain();
+
+    expect(captures).toHaveLength(1);
+    expect(captures[0].opKey).toBe('op_h1h3');
+    expect(captures[0].requestId).toBe('req_h1h3');
+    // dispatch bumped fakeNow by 250ms; enqueue stamped createdAt at now,
+    // so success minus createdAt is exactly the advance.
+    expect(captures[0].ms).toBeGreaterThanOrEqual(250);
+  });
+
   it('subscribe fires an initial snapshot and on every mutation', async () => {
     outbox = new Outbox(scriptedDispatchers({}));
     const snapshots: number[] = [];
