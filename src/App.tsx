@@ -2,6 +2,7 @@ import React from 'react';
 import { Topbar, Rail, Tweaks } from './components/shell';
 import { Peek, CommandBar, CommandPalette, FocusProvider } from './components/nouns';
 import { SeedBanner } from './components/seed-banner';
+import { DevPalette } from './components/dev-palette';
 import { AppProvider } from './app/context';
 import { readJson, readString, writeJson, writeString } from './app/state';
 import { track } from './app/telemetry';
@@ -162,6 +163,7 @@ export function App() {
           Skip to main content
         </a>
         <SeedBanner />
+        <DevPalette />
         <div
           className="app with-cmdbar"
           data-density={t.density}
