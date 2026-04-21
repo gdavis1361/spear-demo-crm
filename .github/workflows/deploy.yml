@@ -94,6 +94,19 @@ jobs:
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
           VITE_APP_VERSION: ${{ github.sha }}
 
+      - name: Strip source maps from deploy artifact (TB8)
+        # Vite emits `sourcemap: 'hidden'` — no sourceMappingURL comment, but
+        # the .map files land in the static output and Vercel would serve
+        # them at /assets/*.map behind a 1-year immutable cache. Anyone who
+        # guesses the filename gets full unminified source. We keep the maps
+        # for Sentry-style uploads (future) but strip them from the public
+        # deploy artifact. The tombstone log documents the count so an
+        # unexpected zero signals vite config drift.
+        run: |
+          count=$(find .vercel/output -name '*.js.map' -type f | wc -l | tr -d ' ')
+          echo "Stripping $count source map(s) from deploy artifact."
+          find .vercel/output -name '*.js.map' -type f -delete
+
       - name: Deploy (prebuilt → production alias)
         id: deploy
         run: |

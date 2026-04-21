@@ -425,7 +425,7 @@ export function flush(sync = false): void {
     // refuses (payload too large, closed connection), fall through to
     // persist so the events survive pagehide → next boot.
     const blob = new Blob([payload], { type: 'application/json' });
-    const queued = navigator.sendBeacon('/telemetry', blob);
+    const queued = navigator.sendBeacon('/api/telemetry', blob);
     if (!queued) {
       void persistBatch(payload);
     }
@@ -433,7 +433,7 @@ export function flush(sync = false): void {
   }
 
   // Dev default: log to console so the schema is visible in the network tab.
-  // Real app would POST to '/telemetry' via the API client.
+  // Real app would POST to '/api/telemetry' via the API client.
   if (import.meta.env.DEV) {
     console.debug('[telemetry]', JSON.parse(payload));
     return;
@@ -444,7 +444,7 @@ export function flush(sync = false): void {
   // outlive a page transition; `.catch` now writes durably instead of
   // silently dropping — the most valuable telemetry is the telemetry
   // you can't get after the fact.
-  void fetch('/telemetry', {
+  void fetch('/api/telemetry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: payload,
@@ -475,7 +475,7 @@ export async function drainPersistedTelemetry(): Promise<void> {
   if (rows.length === 0) return;
   for (const row of rows) {
     try {
-      const res = await fetch('/telemetry', {
+      const res = await fetch('/api/telemetry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: row.payload,

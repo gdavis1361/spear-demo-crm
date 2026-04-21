@@ -71,6 +71,14 @@ jobs:
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
           VITE_APP_VERSION: ${{ github.event.pull_request.head.sha }}
 
+      - name: Strip source maps from preview artifact (TB8)
+        # Preview deployments are publicly reachable on *.vercel.app — same
+        # source-map exposure rules apply. See deploy.yml for full rationale.
+        run: |
+          count=$(find .vercel/output -name '*.js.map' -type f | wc -l | tr -d ' ')
+          echo "Stripping $count source map(s) from preview artifact."
+          find .vercel/output -name '*.js.map' -type f -delete
+
       - name: Deploy preview
         id: deploy
         run: |
