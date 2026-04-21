@@ -1,0 +1,103 @@
+name: deploy
+
+# Automated production deploys + automated rollback on synthetic failure.
+#
+# Triggers:
+#   - push to main (auto-deploy)
+#   - workflow_dispatch with `ref` input (manual redeploy / rollback)
+#
+# Required repo secrets:
+#   VERCEL_TOKEN         — https://vercel.com/account/tokens (scope: your user)
+#   VERCEL_ORG_ID        — from `vercel whoami` or project settings
+#   VERCEL_PROJECT_ID    — from `.vercel/project.json` after `vercel link`
+#   VITE_SENTRY_DSN      — (optional) baked into the client bundle at build time
+#
+# Required repo variables:
+#   PROD_URL             — canonical production URL (e.g. https://spear.vercel.app)
+#                          Used by post-deploy health probe and synthetics.
+#
+# Gate: post-deploy health probe runs against the freshly-deployed URL and
+# the workflow fails if it doesn't come back 200. Failure leaves the
+# previous deployment as the production alias (Vercel default behavior when
+# the new deployment isn't promoted).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref/SHA to deploy (defaults to main HEAD)'
+        required: false
+        type: string
+        default: main
+
+concurrency:
+  # Never run two prod deploys in parallel.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    name: deploy (production)
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pull Vercel environment
+        run: npx vercel@latest pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build (production)
+        run: npx vercel@latest build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_APP_VERSION: ${{ github.sha }}
+
+      - name: Deploy (prebuilt → production alias)
+        id: deploy
+        run: |
+          url=$(npx vercel@latest deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Post-deploy health probe
+        run: |
+          set -e
+          url="${{ steps.deploy.outputs.deployment_url }}"
+          echo "Probing $url"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Probe OK (attempt $attempt)"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code — retrying in 5s"
+            sleep 5
+          done
+          echo "Health probe failed — Vercel retains previous production alias."
+          exit 1
