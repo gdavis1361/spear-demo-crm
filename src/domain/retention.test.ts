@@ -102,9 +102,15 @@ describe('ttlForStream', () => {
   it('matches the configured prefix', () => {
     expect(ttlForStream('schedule:milmove.cycle' as StreamKey)).toBe(7 * 24 * 60 * 60 * 1000);
     expect(ttlForStream('workflow:wf-1:run:r1' as StreamKey)).toBe(30 * 24 * 60 * 60 * 1000);
+    // TB7 added 90d per-kind policies for account + deal streams.
+    expect(ttlForStream('account:acc_1' as StreamKey)).toBe(90 * 24 * 60 * 60 * 1000);
+    expect(ttlForStream('deal:ld_1' as StreamKey)).toBe(90 * 24 * 60 * 60 * 1000);
   });
   it('returns null when no policy matches', () => {
-    expect(ttlForStream('deal:ld_1' as StreamKey)).toBeNull();
+    // Promise streams currently have no retention policy — row-level
+    // `promises` store is lifecycle-managed by the promise domain, not
+    // by stream vacuum.
+    expect(ttlForStream('promise:pr_1' as StreamKey)).toBeNull();
   });
 });
 
@@ -290,5 +296,116 @@ describe('vacuumOnce stream-anchored (T2)', () => {
     );
     expect(r.deleted).toBe(2); // only the two 'old' events
     expect(r.scanned).toBe(5);
+  });
+});
+
+// TB7 — per-kind retention lets a policy trim PII-bearing payload
+// kinds (message bodies, quote text) while leaving structural events
+// untouched. The compensating control for keeping IndexedDB
+// unencrypted at rest: old PII drops out of local storage even when
+// the rest of the account history stays readable.
+describe('vacuumOnce per-kind retention (TB7)', () => {
+  it('evicts filtered kinds past ttl; leaves other kinds in the same stream alone', async () => {
+    const log = new InMemoryEventLog();
+    const stream = 'account:acc_x' as StreamKey;
+    // Mix: message_sent (PII), signal_fired (structural),
+    // meeting_held (structural). Only message_sent is eligible.
+    await log.append(stream, [
+      {
+        opKey: 'k_msg',
+        payload: {
+          kind: 'account.message_sent',
+          at: instant('2025-12-01T00:00:00Z'),
+          by: 'rep_mhall',
+          body: 'top-secret negotiation text',
+        },
+      },
+    ]);
+    await log.append(stream, [
+      {
+        opKey: 'k_sig',
+        payload: {
+          kind: 'account.signal_fired',
+          at: instant('2025-12-01T00:00:00Z'),
+          signalId: 'sig_abc',
+        },
+      },
+    ]);
+    await log.append(stream, [
+      {
+        opKey: 'k_meet',
+        payload: {
+          kind: 'account.meeting_held',
+          at: instant('2025-12-01T00:00:00Z'),
+          attendees: ['per_1'],
+          durationMin: 30,
+        },
+      },
+    ]);
+
+    const policy = {
+      prefix: 'account:',
+      ttlMs: 90 * 24 * 60 * 60 * 1000,
+      perEventKinds: ['account.message_sent'] as const,
+    };
+    const deleted: string[] = [];
+    const r = await vacuumOnce(
+      log,
+      policy,
+      Date.parse('2026-12-01T00:00:00Z'), // well past 90 days
+      async (ids) => {
+        for (const id of ids) deleted.push(id);
+      }
+    );
+    expect(r.scanned).toBe(3);
+    expect(r.deleted).toBe(1);
+    // The deleted row must be the message_sent event, not one of the
+    // structural kinds.
+    const all = await log.read(stream);
+    const msgEvent = all.find((e) => e.payload.kind === 'account.message_sent');
+    expect(deleted).toEqual([msgEvent?.id]);
+  });
+
+  it('keeps PII bodies inside the retention window', async () => {
+    const log = new InMemoryEventLog();
+    await log.append('account:acc_y' as StreamKey, [
+      {
+        opKey: 'k',
+        payload: {
+          kind: 'account.message_sent',
+          at: instant('2026-04-01T00:00:00Z'),
+          by: 'rep_mhall',
+          body: 'recent text',
+        },
+      },
+    ]);
+    const policy = {
+      prefix: 'account:',
+      ttlMs: 90 * 24 * 60 * 60 * 1000,
+      perEventKinds: ['account.message_sent'] as const,
+    };
+    const r = await vacuumOnce(
+      log,
+      policy,
+      Date.parse('2026-04-21T00:00:00Z'), // only 20 days later
+      async () => undefined
+    );
+    expect(r.deleted).toBe(0);
+  });
+});
+
+describe('DEFAULT_POLICIES shape (TB7)', () => {
+  it('includes a per-kind policy for account message bodies', () => {
+    const accountPolicy = DEFAULT_POLICIES.find((p) => p.prefix === 'account:');
+    expect(accountPolicy).toBeDefined();
+    expect(accountPolicy?.perEventKinds).toContain('account.message_sent');
+    expect(accountPolicy?.perEventKinds).toContain('account.message_received');
+    expect(accountPolicy?.ttlMs).toBe(90 * 24 * 60 * 60 * 1000);
+  });
+
+  it('includes a per-kind policy for deal quote text', () => {
+    const dealPolicy = DEFAULT_POLICIES.find((p) => p.prefix === 'deal:');
+    expect(dealPolicy).toBeDefined();
+    expect(dealPolicy?.perEventKinds).toContain('deal.quote_sent');
   });
 });
