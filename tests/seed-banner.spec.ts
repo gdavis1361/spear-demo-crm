@@ -102,11 +102,12 @@ test.describe('Phase 3 PR 2 — SeedBanner', () => {
     await expect
       .poll(() => seedDbEventCount(page, SEED_DB), { timeout: 10_000 })
       .toBeGreaterThanOrEqual(30);
-    const countBefore = await seedDbEventCount(page, SEED_DB);
 
     // Inject a sentinel event directly into the events store. If Reset
     // works, the sentinel vanishes after re-seeding (opKey regenerated
     // from scratch, sentinel was never in the scenario's output).
+    // We verify by ID (not count delta) because busy-rep's ticker is still
+    // emitting scheduled events in the background — the count isn't stable.
     await page.evaluate(async () => {
       await new Promise<void>((resolve, reject) => {
         const req = indexedDB.open('spear-events-seed-busy-rep');
@@ -143,8 +144,27 @@ test.describe('Phase 3 PR 2 — SeedBanner', () => {
         req.onerror = () => reject(req.error);
       });
     });
-    const countWithSentinel = await seedDbEventCount(page, SEED_DB);
-    expect(countWithSentinel).toBe(countBefore + 1);
+    // Verify sentinel landed (by ID, not count — ticker events race the read).
+    const sentinelBefore = await page.evaluate(async () => {
+      return new Promise<number>((resolve) => {
+        const req = indexedDB.open('spear-events-seed-busy-rep');
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction('events', 'readonly');
+          const get = tx.objectStore('events').get('00000000000000000000000000');
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result === undefined ? 0 : 1);
+          };
+          get.onerror = () => {
+            db.close();
+            resolve(-1);
+          };
+        };
+        req.onerror = () => resolve(-1);
+      });
+    });
+    expect(sentinelBefore).toBe(1);
 
     // Click Reset. Page reloads, DB is deleted during consumePendingReset(),
     // activation re-seeds from scratch.
