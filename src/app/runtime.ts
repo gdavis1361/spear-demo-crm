@@ -14,7 +14,7 @@ import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
 import { recordVacuumOutcome } from '../domain/stats';
-import { runScenario, scenarioName } from '../seeds';
+import { runScenario, scenarioName, type ScenarioName } from '../seeds';
 
 export const promiseStore = new PromiseStore(eventLog);
 export const scheduleRegistry = new ScheduleRegistry(eventLog);
@@ -61,17 +61,27 @@ let booted = false;
  *   4. Register polling schedules.
  *   5. Install the vacuum runner (idle-time, hourly cadence).
  */
-export async function bootRuntime(): Promise<void> {
+export interface BootOptions {
+  /** Scenario to seed at boot. Default: 'canonical' (user's real DB). */
+  readonly scenario?: ScenarioName;
+}
+
+export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   if (booted || typeof window === 'undefined') return;
   booted = true;
 
   await promiseStore.ready;
-  // Canonical seed. `runInvariants: false` because a user's local state may
+  // Seed scenario. `runInvariants: false` because a user's local state may
   // have drifted (old build, deleted promise, vacuum) — in that case the
   // scenario's build short-circuits but the invariant would still throw
   // and take down bootRuntime. Invariants are a test/CLI concern, not a
   // boot-time concern.
-  await runScenario(eventLog, { promiseStore }, scenarioName('canonical'), {
+  //
+  // Seed scenarios (`?seed=<name>`) open their own IndexedDB via
+  // `setDbName()` before this module loads, so the eventLog + promiseStore
+  // seen here are already bound to the isolated DB.
+  const scenario = opts.scenario ?? scenarioName('canonical');
+  await runScenario(eventLog, { promiseStore }, scenario, {
     runInvariants: false,
   });
 

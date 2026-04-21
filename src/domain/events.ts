@@ -17,8 +17,16 @@
 import type { DealId, AccountId, LeadId, SignalId } from '../lib/ids';
 import { ulid, ulidTimestamp } from '../lib/ulid';
 import { track } from '../app/telemetry';
+import { getDbName, lockDbName, setDbName, _resetDbNameForTests } from './db-name';
 import type { EventEnvelopeT, ValidatedPayload } from './event-schema';
 import { validatePayload, validateEnvelope } from './event-schema';
+
+// Re-export the DB-name helpers so existing consumers (tests, seed
+// activation path) keep their current import site. The heavy-schema
+// path still lives here; callers who need *only* the name helpers
+// (seed-activation, which runs in the initial JS chunk) should import
+// from `./db-name` directly to keep Zod out of their tree.
+export { getDbName, setDbName };
 import type {
   DealEvent as _DealEvent,
   AccountEvent as _AccountEvent,
@@ -300,7 +308,10 @@ function byUlid(a: StoredEvent, b: StoredEvent): number {
 
 // ─── IndexedDB backend ─────────────────────────────────────────────────────
 
-const DB_NAME = 'spear-events';
+// DB name lives in `./db-name.ts` so the seed-activation path can swap it
+// without pulling Zod schemas into the initial JS chunk. `openDb()` below
+// calls `lockDbName()` on its first successful run so `setDbName()`
+// becomes a no-op after that point.
 const DB_VERSION = 4;
 const STORE = 'events';
 const STORE_DLQ = 'events_dlq';
@@ -367,8 +378,11 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
+  // First-open locks the DB name so downstream `setDbName()` calls can't
+  // silently swap the database out from under active connections.
+  lockDbName();
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(getDbName(), DB_VERSION);
     req.onerror = () => reject(req.error);
     req.onsuccess = () => {
       const db = req.result;
@@ -402,18 +416,48 @@ export function _resetDbConnectionForTests(): void {
   dbPromise = null;
 }
 
+/** Test-only: reset DB_NAME + cached connection. Used by isolation tests. */
+export function _setDbNameForTests(name: string): void {
+  _resetDbNameForTests(name);
+  dbPromise = null;
+}
+
 /**
  * Shared opener for callers that need to read/write other stores in the
- * same `spear-events` database (e.g. PromiseStore). One connection,
- * one migration story — same as a single Postgres connection pool.
+ * current IndexedDB database (e.g. PromiseStore). One connection, one
+ * migration story — same as a single Postgres connection pool.
  */
 export const openSpearDb = openDb;
 
-const CHANNEL_NAME = 'spear:events';
+/**
+ * BroadcastChannel name is derived from the current DB name so a tab on
+ * `/?seed=busy-rep` (DB: spear-events-seed-busy-rep) doesn't cross-talk
+ * with a tab on `/` (DB: spear-events). Both tabs open their own DB AND
+ * their own channel.
+ */
+function channelName(): string {
+  return `spear:bcast:${getDbName()}`;
+}
 
 export class IndexedDbEventLog implements EventLog {
-  private channel: BroadcastChannel | null =
-    typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null;
+  private _channel: BroadcastChannel | null = null;
+  private _channelInit = false;
+
+  /**
+   * Lazily open the BroadcastChannel the first time a caller needs it.
+   * Reading the channel at construction time would snapshot the DB_NAME
+   * before `setDbName()` had a chance to run; lazy opening means the
+   * channel name matches the DB name that `openDb()` will actually use.
+   */
+  private get channel(): BroadcastChannel | null {
+    if (!this._channelInit) {
+      this._channelInit = true;
+      if (typeof BroadcastChannel !== 'undefined') {
+        this._channel = new BroadcastChannel(channelName());
+      }
+    }
+    return this._channel;
+  }
 
   async append(stream: StreamKey, events: readonly AppendInput[]): Promise<AppendResult> {
     return this.doAppend(stream, events, () => true);
