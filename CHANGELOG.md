@@ -10,6 +10,23 @@ Changes after the initial commit are managed by
 [Conventional Commits](https://www.conventionalcommits.org/) prefixes is rolled into
 the next release PR automatically. Do not hand-edit entries below.
 
+## [0.1.2](https://github.com/gdavis1361/spear-demo-crm/compare/v0.1.1...v0.1.2) (2026-04-21)
+
+
+### Features
+
+* **app:** dev palette + per-scenario visual regression (Phase 3 PR 3) ([#34](https://github.com/gdavis1361/spear-demo-crm/issues/34)) ([84b2c4b](https://github.com/gdavis1361/spear-demo-crm/commit/84b2c4b892516e77fc2606f35744f1aa6b53f6a7))
+* **app:** honeycomb observability audit varsity plan — h1-h10 ([#39](https://github.com/gdavis1361/spear-demo-crm/issues/39)) ([5cc8a5d](https://github.com/gdavis1361/spear-demo-crm/commit/5cc8a5dcd8c443d984548aab956f8eea85ac7adc))
+* **app:** linear runtime audit varsity plan — vx1-vx10 ([#38](https://github.com/gdavis1361/spear-demo-crm/issues/38)) ([b35875c](https://github.com/gdavis1361/spear-demo-crm/commit/b35875c8823de7aabd689c5c6a33be8653d9d61f))
+* **app:** seed activation via ?seed=&lt;name&gt; with isolated IndexedDB ([#31](https://github.com/gdavis1361/spear-demo-crm/issues/31)) ([2758404](https://github.com/gdavis1361/spear-demo-crm/commit/2758404479c21663da9cee2b7b5b40530cdd4e3d))
+* **app:** seed banner with Reset/Exit controls (Phase 3 PR 2) ([#33](https://github.com/gdavis1361/spear-demo-crm/issues/33)) ([9cf947c](https://github.com/gdavis1361/spear-demo-crm/commit/9cf947ce9f7461349b3a9e9d5d6734607d2d213d))
+* **app:** ship critical + serious a11y fixes from Deque audit ([#36](https://github.com/gdavis1361/spear-demo-crm/issues/36)) ([f330bfa](https://github.com/gdavis1361/spear-demo-crm/commit/f330bfaf25288884c7bce1abe3a384d202c9b5a4))
+
+
+### Performance
+
+* **app:** voidzero audit p1-p7 — bundler graph + perf cleanup ([#37](https://github.com/gdavis1361/spear-demo-crm/issues/37)) ([9fa6ddd](https://github.com/gdavis1361/spear-demo-crm/commit/9fa6ddde23b706e092305ddea78b0f97cefeb250))
+
 ## [0.1.1](https://github.com/gdavis1361/spear-demo-crm/compare/v0.1.0...v0.1.1) (2026-04-21)
 
 
