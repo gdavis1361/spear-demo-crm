@@ -75,7 +75,7 @@ async function markSignal(
   announce(verb === 'dismiss' ? `Dismissed signal ${target.id}.` : `Actioned signal ${target.id}.`);
   track({
     name: verb === 'dismiss' ? 'signal.dismissed' : 'signal.actioned',
-    props: { id: target.id, requestId: 'local' },
+    props: { id: target.id, requestId: 'local', opKey },
   });
 
   await outbox.enqueue(
@@ -135,7 +135,7 @@ export function Signals() {
   // owe the user a screen-reader cue so the visual un-revert doesn't land
   // silently.
   React.useEffect(() => {
-    return outbox.onFailure((mutation, error, compensation) => {
+    return outbox.onFailure((mutation, error, compensation, _opKey) => {
       if (mutation.kind !== 'dismiss_signal' && mutation.kind !== 'action_signal') return;
       const verb = mutation.kind === 'dismiss_signal' ? 'Dismiss' : 'Action';
       if (compensation.status === 'compensated') {

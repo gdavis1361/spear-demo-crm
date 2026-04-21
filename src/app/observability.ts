@@ -30,15 +30,25 @@ interface InitOptions {
 
 type SentryCapture = (error: unknown, context?: { extra?: Record<string, unknown> }) => void;
 type SentrySetTag = (key: string, value: string) => void;
+type SpanAttributeValue = string | number | boolean | undefined;
+type SentryStartSpan = <T>(
+  ctx: { name: string; op?: string; attributes?: Record<string, SpanAttributeValue> },
+  cb: () => T | Promise<T>
+) => T | Promise<T>;
 
 const noopCapture: SentryCapture = () => undefined;
 const noopSetTag: SentrySetTag = () => undefined;
+// No-op span just invokes the callback synchronously. This keeps
+// non-Sentry builds byte-identical to pre-H5 behavior — the tracing
+// boundary is structural (zero cost when DSN isn't configured).
+const noopStartSpan: SentryStartSpan = (_ctx, cb) => cb();
 
 // Mutable so the async init path can swap in the real implementations.
-// Callers of `captureException` / `setTag` are synchronous; they don't
-// await initObservability and shouldn't have to.
+// Callers of `captureException` / `setTag` / `startSpan` are synchronous;
+// they don't await initObservability and shouldn't have to.
 let _capture: SentryCapture = noopCapture;
 let _setTag: SentrySetTag = noopSetTag;
+let _startSpan: SentryStartSpan = noopStartSpan;
 
 export async function initObservability(opts: InitOptions = {}): Promise<void> {
   const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
@@ -91,6 +101,7 @@ export async function initObservability(opts: InitOptions = {}): Promise<void> {
   });
   _capture = (error, context) => Sentry.captureException(error, context);
   _setTag = (key, value) => Sentry.setTag(key, value);
+  _startSpan = ((ctx, cb) => Sentry.startSpan(ctx, cb)) as SentryStartSpan;
 }
 
 export function captureException(error: unknown, context?: Record<string, unknown>): void {
@@ -99,6 +110,22 @@ export function captureException(error: unknown, context?: Record<string, unknow
 
 export function setTag(key: string, value: string): void {
   _setTag(key, value);
+}
+
+/**
+ * Wrap a unit of work in a Sentry span when Sentry is live; invoke the
+ * callback directly when it isn't. Used to trace long-running durable
+ * operations — outbox drain, scenario seed, workflow run, boot stages —
+ * without making Sentry a hard dependency.
+ *
+ * The return is passthrough: sync-returning callbacks yield a value,
+ * async-returning callbacks yield a Promise. Caller decides.
+ */
+export function startSpan<T>(
+  ctx: { name: string; op?: string; attributes?: Record<string, SpanAttributeValue> },
+  cb: () => T | Promise<T>
+): T | Promise<T> {
+  return _startSpan(ctx, cb);
 }
 
 const PII_KEYS = new Set(['email', 'phone', 'name', 'address']);

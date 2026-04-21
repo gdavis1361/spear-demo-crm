@@ -35,6 +35,7 @@
 import type { ApiError, ErrorCode } from '../api/errors';
 import { openSpearDb, STORE_OUTBOX, getDbName } from './events';
 import { track } from '../app/telemetry';
+import { startSpan } from '../app/observability';
 
 // ─── Mutation catalogue ────────────────────────────────────────────────────
 
@@ -241,12 +242,15 @@ type Subscriber = (snapshot: readonly OutboxRow[]) => void;
 type FailureSubscriber = (
   mutation: OutboxMutation,
   error: ApiError,
-  compensation: CompensationResult
+  compensation: CompensationResult,
+  opKey: string
 ) => void;
 type SuccessSubscriber = (
   mutation: OutboxMutation,
   attempts: number,
-  requestId: string | undefined
+  requestId: string | undefined,
+  ms: number,
+  opKey: string
 ) => void;
 
 export class Outbox {
@@ -382,28 +386,33 @@ export class Outbox {
 
     this.draining = true;
     try {
-      if (typeof navigator !== 'undefined' && navigator.locks?.request) {
-        return await new Promise<DrainReport>((resolve) => {
-          void navigator.locks.request(lockName(), { ifAvailable: true }, async (lock) => {
-            if (!lock) {
-              resolve({
-                attempted: 0,
-                succeeded: 0,
-                retriedLater: 0,
-                permanentFailures: 0,
-                skippedBusy: true,
-              });
-              return;
-            }
-            const report = await this.drainInner();
-            resolve(report);
+      // H5: wrap the whole drain in a Sentry span so slow drains show up
+      // in performance traces with their attempt/success/failure mix.
+      // Returns the DrainReport synchronously via the promise boundary.
+      return await (startSpan({ name: 'outbox.drain', op: 'outbox' }, async () => {
+        if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+          return await new Promise<DrainReport>((resolve) => {
+            void navigator.locks.request(lockName(), { ifAvailable: true }, async (lock) => {
+              if (!lock) {
+                resolve({
+                  attempted: 0,
+                  succeeded: 0,
+                  retriedLater: 0,
+                  permanentFailures: 0,
+                  skippedBusy: true,
+                });
+                return;
+              }
+              const report = await this.drainInner();
+              resolve(report);
+            });
           });
-        });
-      }
-      // Fallback for environments without Web Locks (should never hit in
-      // prod — every browser we target has it; this keeps tests runnable
-      // on reduced polyfills).
-      return await this.drainInner();
+        }
+        // Fallback for environments without Web Locks (should never hit in
+        // prod — every browser we target has it; this keeps tests runnable
+        // on reduced polyfills).
+        return await this.drainInner();
+      }) as Promise<DrainReport>);
     } finally {
       this.draining = false;
     }
@@ -458,7 +467,7 @@ export class Outbox {
       });
       track({
         name: 'outbox.orphan_recovered',
-        props: { kind: row.mutation.kind, ageMs: now - startedAt },
+        props: { kind: row.mutation.kind, ageMs: now - startedAt, opKey: row.opKey },
       });
     }
   }
@@ -484,7 +493,21 @@ export class Outbox {
 
     let result: DispatchResult;
     try {
-      result = await dispatcher.dispatch(row.mutation, row.opKey);
+      // H5: per-dispatch span lets us see tail latency per mutation kind
+      // without flooding: one span per wire call, attributed by kind +
+      // attempt + opKey. Nests under the outer `outbox.drain` span.
+      result = (await startSpan(
+        {
+          name: `dispatcher.${row.mutation.kind}`,
+          op: 'outbox.dispatch',
+          attributes: {
+            'outbox.kind': row.mutation.kind,
+            'outbox.attempt': row.attemptCount + 1,
+            'outbox.op_key': row.opKey,
+          },
+        },
+        () => dispatcher.dispatch(row.mutation, row.opKey)
+      )) as DispatchResult;
     } catch (cause) {
       // Dispatcher threw (shouldn't — they should return DispatchErr). Treat
       // as a retryable network-ish failure.
@@ -504,9 +527,15 @@ export class Outbox {
       await deleteRow(row.opKey);
       this.broadcast();
       const attempts = row.attemptCount + 1;
+      // H3: enqueue→confirm latency. `createdAt` is the wall-clock stamp
+      // we wrote in `enqueue()`; subtracting now gives us the durable
+      // end-to-end for this mutation, restoring the pre-outbox
+      // `pipeline.card_moved_confirmed.ms` signal (but across the full
+      // outbox lifecycle, not just the inline fetch).
+      const ms = this.opts.now() - new Date(row.createdAt).getTime();
       track({
         name: 'outbox.mutation_succeeded',
-        props: { kind: row.mutation.kind, attempts },
+        props: { kind: row.mutation.kind, attempts, ms, opKey: row.opKey },
       });
       // VX5: surface success to UI-layer subscribers so components can
       // emit their own confirmation telemetry (restoring the pre-outbox
@@ -514,7 +543,7 @@ export class Outbox {
       // success-only UX ("saved").
       for (const fn of this.successSubs) {
         try {
-          fn(row.mutation, attempts, result.requestId);
+          fn(row.mutation, attempts, result.requestId, ms, row.opKey);
         } catch (cause) {
           console.error('[outbox] success subscriber threw', cause);
         }
@@ -560,6 +589,7 @@ export class Outbox {
         attempts: nextAttemptCount,
         nextAttemptInMs: delay,
         code: result.error.code,
+        opKey: row.opKey,
       },
     });
     return 'retry';
@@ -586,6 +616,7 @@ export class Outbox {
         attempts: attemptCount,
         code: error.code,
         requestId: error.requestId,
+        opKey: row.opKey,
       },
     });
 
@@ -614,7 +645,7 @@ export class Outbox {
     // local state and want to un-set it).
     for (const fn of this.failureSubs) {
       try {
-        fn(row.mutation, error, compensation);
+        fn(row.mutation, error, compensation, row.opKey);
       } catch (cause) {
         console.error('[outbox] failure subscriber threw', cause);
       }

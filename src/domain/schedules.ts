@@ -13,6 +13,7 @@ import type { Instant } from '../lib/time';
 import { now as nowInstant } from '../lib/time';
 import type { EventLog } from './events';
 import { scheduleStream } from './events';
+import { track } from '../app/telemetry';
 
 export interface RetryPolicy {
   readonly maxAttempts: number;
@@ -115,7 +116,9 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
   private arm(): void {
     if (typeof setTimeout === 'undefined' || this.paused) return;
     const ms = Math.max(0, new Date(this.nextAt.iso).getTime() - Date.now());
-    this.timer = setTimeout(() => { void this.runNow(); }, ms);
+    this.timer = setTimeout(() => {
+      void this.runNow();
+    }, ms);
   }
 
   nextRunAt(): Instant {
@@ -128,7 +131,10 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
 
   pause(): void {
     this.paused = true;
-    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 
   resume(): void {
@@ -143,13 +149,26 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
   }
 
   async runNow(): Promise<RunRecord> {
-    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
     const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const startedAt = nowInstant();
-    await this.log.append(scheduleStream(this.name), [{
-      opKey: `sched.start:${runId}`,
-      payload: { kind: 'schedule.run_started', at: startedAt, scheduledFor: this.nextAt },
-    }]);
+    await this.log.append(scheduleStream(this.name), [
+      {
+        opKey: `sched.start:${runId}`,
+        payload: { kind: 'schedule.run_started', at: startedAt, scheduledFor: this.nextAt },
+      },
+    ]);
+    // H6: mirror each schedule lifecycle edge to the telemetry stream
+    // alongside the event-log write. Event log is the system of record
+    // (replayable, vacuumed, diffable); telemetry is for live dashboards
+    // and alerting. We write to both so the SRE on call doesn't have to
+    // replay events to find out the 2am cron is failing.
+    track({ name: 'schedule.started', props: { name: this.name, runId } });
+
+    const startEpoch = new Date(startedAt.iso).getTime();
 
     let attempts = 0;
     let lastError: unknown;
@@ -158,13 +177,28 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
       try {
         const out = await this.cfg.run(runId, startedAt);
         const finishedAt = nowInstant();
-        const summary = typeof out === 'object' && out && 'items' in out ? `${(out as { items: number }).items} items` : undefined;
+        const items =
+          typeof out === 'object' && out && 'items' in out ? (out as { items: number }).items : 0;
+        const summary =
+          typeof out === 'object' && out && 'items' in out ? `${items} items` : undefined;
         const record: RunRecord = { runId, startedAt, finishedAt, attempts, status: 'ok', summary };
         this.history.push(record);
-        await this.log.append(scheduleStream(this.name), [{
-          opKey: `sched.complete:${runId}`,
-          payload: { kind: 'schedule.run_completed', at: finishedAt, runId, items: summary ? parseInt(summary) : 0 },
-        }]);
+        await this.log.append(scheduleStream(this.name), [
+          {
+            opKey: `sched.complete:${runId}`,
+            payload: { kind: 'schedule.run_completed', at: finishedAt, runId, items },
+          },
+        ]);
+        track({
+          name: 'schedule.succeeded',
+          props: {
+            name: this.name,
+            runId,
+            attempts,
+            ms: new Date(finishedAt.iso).getTime() - startEpoch,
+            items,
+          },
+        });
         if (!this.paused) {
           this.nextAt = this.computeNext(finishedAt);
           this.arm();
@@ -175,7 +209,8 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
         const code = (e as { code?: string }).code ?? 'unknown';
         if (this.cfg.retry.nonRetryable.includes(code)) break;
         if (attempts < this.cfg.retry.maxAttempts) {
-          const backoff = this.cfg.retry.initialBackoffMs * this.cfg.retry.backoffMultiplier ** (attempts - 1);
+          const backoff =
+            this.cfg.retry.initialBackoffMs * this.cfg.retry.backoffMultiplier ** (attempts - 1);
           await new Promise((r) => setTimeout(r, backoff));
         }
       }
@@ -185,14 +220,31 @@ class ActiveSchedule<T = unknown> implements ScheduleHandle {
     const message = (lastError as { message?: string } | undefined)?.message ?? 'unknown';
     const code = (lastError as { code?: string } | undefined)?.code ?? 'unknown';
     const dead = attempts >= this.cfg.retry.maxAttempts;
-    const record: RunRecord = { runId, startedAt, finishedAt, attempts, status: dead ? 'dead-lettered' : 'failed', summary: message };
+    const record: RunRecord = {
+      runId,
+      startedAt,
+      finishedAt,
+      attempts,
+      status: dead ? 'dead-lettered' : 'failed',
+      summary: message,
+    };
     this.history.push(record);
-    await this.log.append(scheduleStream(this.name), [{
-      opKey: `sched.fail:${runId}`,
-      payload: dead
-        ? { kind: 'schedule.dead_lettered', at: finishedAt, runId, attempts }
-        : { kind: 'schedule.run_failed',    at: finishedAt, runId, code, message },
-    }]);
+    await this.log.append(scheduleStream(this.name), [
+      {
+        opKey: `sched.fail:${runId}`,
+        payload: dead
+          ? { kind: 'schedule.dead_lettered', at: finishedAt, runId, attempts }
+          : { kind: 'schedule.run_failed', at: finishedAt, runId, code, message },
+      },
+    ]);
+    track(
+      dead
+        ? { name: 'schedule.dead_lettered', props: { name: this.name, runId, attempts } }
+        : {
+            name: 'schedule.failed',
+            props: { name: this.name, runId, attempts, code, message },
+          }
+    );
     if (!this.paused) {
       this.nextAt = this.computeNext(finishedAt);
       this.arm();

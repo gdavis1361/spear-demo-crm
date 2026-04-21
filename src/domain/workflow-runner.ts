@@ -15,6 +15,8 @@ import { now as nowInstant } from '../lib/time';
 import type { EventLog, StoredEvent, WorkflowRunEvent } from './events';
 import { workflowRunStream } from './events';
 import type { WorkflowDefinition, WorkflowStep, Disposition } from './workflow-def';
+import { track } from '../app/telemetry';
+import { startSpan } from '../app/observability';
 
 export interface RunContext {
   /** Input data piped in from the trigger. Opaque — predicates read from it. */
@@ -85,11 +87,16 @@ function shouldPass(step: WorkflowStep, ctx: RunContext): boolean {
 
 function executeStep(step: WorkflowStep, ctx: RunContext): 'ok' | 'skip' | 'wait' {
   switch (step.kind) {
-    case 'trigger': return 'ok';
-    case 'filter':  return shouldPass(step, ctx) ? 'ok' : 'skip';
-    case 'action':  return 'ok';
-    case 'wait':    return 'wait';
-    case 'end':     return 'ok';
+    case 'trigger':
+      return 'ok';
+    case 'filter':
+      return shouldPass(step, ctx) ? 'ok' : 'skip';
+    case 'action':
+      return 'ok';
+    case 'wait':
+      return 'wait';
+    case 'end':
+      return 'ok';
   }
 }
 
@@ -105,7 +112,12 @@ export function dryRun(def: WorkflowDefinition, ctx: RunContext): RunResult {
   const nowFn = ctx.now ?? nowInstant;
   const startedAt = nowFn();
   const events: WorkflowRunEvent[] = [
-    { kind: 'workflow.run_started', at: startedAt, version: def.version, trigger: (def.steps[0] as { source?: string }).source ?? 'manual' },
+    {
+      kind: 'workflow.run_started',
+      at: startedAt,
+      version: def.version,
+      trigger: (def.steps[0] as { source?: string }).source ?? 'manual',
+    },
   ];
   const steps: RunStepTrace[] = [];
   let disposition: RunResult['disposition'] = 'dropped';
@@ -120,15 +132,34 @@ export function dryRun(def: WorkflowDefinition, ctx: RunContext): RunResult {
       // for "paused"). A `workflow.run_completed` is intentionally NOT emitted
       // — replay treats absence of run_completed as `waiting`. This keeps the
       // event log honest.
-      events.push({ kind: 'workflow.step_executed', at, stepIdx: i, stepKind: step.kind, outcome: 'skip', ms: 0 });
+      events.push({
+        kind: 'workflow.step_executed',
+        at,
+        stepIdx: i,
+        stepKind: step.kind,
+        outcome: 'skip',
+        ms: 0,
+      });
       steps.push({ idx: i, kind: step.kind, outcome: 'wait', label: step.label, ms: 0 });
       waitingAtStep = i;
       break;
     }
-    events.push({ kind: 'workflow.step_executed', at, stepIdx: i, stepKind: step.kind, outcome: outcome === 'ok' ? 'ok' : 'skip', ms: 0 });
+    events.push({
+      kind: 'workflow.step_executed',
+      at,
+      stepIdx: i,
+      stepKind: step.kind,
+      outcome: outcome === 'ok' ? 'ok' : 'skip',
+      ms: 0,
+    });
     steps.push({ idx: i, kind: step.kind, outcome, label: step.label, ms: 0 });
-    if (outcome === 'skip') { disposition = 'dropped'; break; }
-    if (step.kind === 'end') { disposition = step.disposition; }
+    if (outcome === 'skip') {
+      disposition = 'dropped';
+      break;
+    }
+    if (step.kind === 'end') {
+      disposition = step.disposition;
+    }
   }
 
   if (waitingAtStep === null) {
@@ -153,14 +184,59 @@ export async function run(
   ctx: RunContext,
   log: EventLog
 ): Promise<RunResult> {
-  const result = dryRun(def, ctx);
-  const stream = workflowRunStream(def.id, ctx.runId);
-  // opKey is deterministic per (runId, eventIdx) — re-running this function
-  // with the same runId is an idempotent storage operation.
-  await log.append(
-    stream,
-    result.events.map((payload, idx) => ({ opKey: `${ctx.runId}:${idx}`, payload }))
-  );
+  // H6: emit `workflow.started` / `workflow.completed` telemetry
+  // alongside the durable event-log writes. Event-log is the system of
+  // record; telemetry gives the SRE team a honeycomb-queryable stream
+  // without having to replay event logs. H5 wraps the span around both.
+  track({ name: 'workflow.started', props: { workflowId: def.id, runId: ctx.runId } });
+  const t0 =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  const result = (await startSpan(
+    {
+      name: `workflow.run.${def.id}`,
+      op: 'workflow.run',
+      attributes: {
+        'workflow.id': def.id,
+        'workflow.version': def.version,
+        'workflow.run_id': ctx.runId,
+      },
+    },
+    async () => {
+      const r = dryRun(def, ctx);
+      const stream = workflowRunStream(def.id, ctx.runId);
+      // opKey is deterministic per (runId, eventIdx) — re-running this
+      // function with the same runId is an idempotent storage operation.
+      await log.append(
+        stream,
+        r.events.map((payload, idx) => ({ opKey: `${ctx.runId}:${idx}`, payload }))
+      );
+      return r;
+    }
+  )) as RunResult;
+  const t1 =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  // Any step that failed pushes its trace with `outcome: 'failed'`; the
+  // run as a whole counts as failed for the SLI when that happens, even
+  // if `disposition` is a routing state like 'dropped' or 'queued'.
+  // 'waiting' is not a terminal outcome — we still emit a completion
+  // event because the run returned, but mark it ok so the SLI doesn't
+  // punish a paused workflow.
+  const anyFailed = result.steps.some((s) => s.outcome === 'failed');
+  const status: 'ok' | 'failed' = anyFailed ? 'failed' : 'ok';
+  track({
+    name: 'workflow.completed',
+    props: {
+      workflowId: def.id,
+      runId: ctx.runId,
+      ms: Math.round(t1 - t0),
+      steps: result.steps.length,
+      status,
+    },
+  });
   return result;
 }
 
@@ -168,10 +244,7 @@ export async function run(
 // Given a frozen event stream, reconstruct the run result. Must be
 // byte-identical to the result of `run()` on the same inputs.
 
-export function replay(
-  def: WorkflowDefinition,
-  events: readonly StoredEvent[]
-): RunResult | null {
+export function replay(def: WorkflowDefinition, events: readonly StoredEvent[]): RunResult | null {
   // Pull just the workflow-shaped payloads. The runtime tag on `kind` is
   // enough to narrow safely back to `WorkflowRunEvent`.
   const runEvents: WorkflowRunEvent[] = [];

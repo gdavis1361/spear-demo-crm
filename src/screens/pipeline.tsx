@@ -106,6 +106,13 @@ export function PipelineKanban() {
       const fromLabel = STAGES.find((s) => s.k === from)?.label ?? from;
       const toLabel = STAGES.find((s) => s.k === to)?.label ?? to;
 
+      // Single idempotency key shared by the local event log + the API call.
+      // Same key on retry → both sides accept at most one event. H1: also
+      // threaded into every telemetry event fired downstream so Honeycomb
+      // can correlate user-intent → local-append → outbox-dispatch →
+      // server-ack through a single filter.
+      const opKey = newIdempotencyKey();
+
       // Domain check: state machine rejects illegal edges before we hit the wire.
       if (!canTransition(from, to)) {
         track({
@@ -117,6 +124,7 @@ export function PipelineKanban() {
             ms: 0,
             code: 'stage_transition_invalid',
             requestId: 'local',
+            opKey,
           },
         });
         console.warn(`[pipeline] illegal transition ${from} → ${to}; dropped client-side`);
@@ -125,9 +133,6 @@ export function PipelineKanban() {
       }
 
       const t0 = performance.now();
-      // Single idempotency key shared by the local event log + the API call.
-      // Same key on retry → both sides accept at most one event.
-      const opKey = newIdempotencyKey();
 
       // Append to the durable event log under an optimistic lock. If another
       // tab beat us to the move, runTransition returns optimistic_lock_failure
@@ -150,6 +155,7 @@ export function PipelineKanban() {
             ms: Math.round(performance.now() - t0),
             code: local.code,
             requestId: 'local',
+            opKey,
           },
         });
         console.warn(`[pipeline] local commit refused: ${local.code} — ${local.message}`);
@@ -158,7 +164,10 @@ export function PipelineKanban() {
 
       // Projection already has the new stage from the `deal.advanced` event;
       // the subscription in useDeals() re-renders this component.
-      track({ name: 'pipeline.card_moved', props: { dealId: id, from, to, optimistic: true } });
+      track({
+        name: 'pipeline.card_moved',
+        props: { dealId: id, from, to, optimistic: true, opKey },
+      });
       // Announce the optimistic success now, not after the server confirms.
       // Screen reader users expect feedback at the same latency sighted
       // users get the visual update; permanent server failure is announced
@@ -179,12 +188,16 @@ export function PipelineKanban() {
     [deals, announce]
   );
 
-  // VX5: restore `pipeline.card_moved_confirmed` telemetry. The outbox
-  // owns server-sync now, so the confirmation event can't fire inline at
-  // the click handler anymore — it fires here, once the dispatcher
-  // returns ok. Dashboards keying on this event keep working unchanged.
+  // VX5 + H3: restore `pipeline.card_moved_confirmed` telemetry. The
+  // outbox owns server-sync now, so the confirmation event can't fire
+  // inline at the click handler anymore — it fires here, once the
+  // dispatcher returns ok. H3 reintroduced enqueue→confirm timing at
+  // the outbox layer (passed as the 4th arg), so `ms` is no longer the
+  // honest-zero placeholder it was between VX5 and H3. The `opKey` ties
+  // this confirmation back to the `pipeline.card_moved` and the
+  // `outbox.mutation_succeeded` events for a single Honeycomb trace.
   React.useEffect(() => {
-    return outbox.onSuccess((mutation, _attempts, requestId) => {
+    return outbox.onSuccess((mutation, _attempts, requestId, ms, opKey) => {
       if (mutation.kind !== 'advance_deal') return;
       track({
         name: 'pipeline.card_moved_confirmed',
@@ -192,11 +205,9 @@ export function PipelineKanban() {
           dealId: mutation.dealId,
           from: mutation.fromStage,
           to: mutation.toStage,
-          // We lost inline latency measurement when the API call moved
-          // to the outbox. 0 is the honest placeholder until VX5 grows
-          // enqueue→confirm timing as a first-class metric.
-          ms: 0,
+          ms,
           requestId: requestId ?? 'unknown',
+          opKey,
         },
       });
     });
@@ -210,7 +221,7 @@ export function PipelineKanban() {
   // further), we announce that the local stage is stale instead — a
   // false "returned to X" would itself be the bug.
   React.useEffect(() => {
-    return outbox.onFailure((mutation, error, compensation) => {
+    return outbox.onFailure((mutation, error, compensation, opKey) => {
       if (mutation.kind !== 'advance_deal') return;
       const fromLabel = STAGES.find((s) => s.k === mutation.fromStage)?.label ?? mutation.fromStage;
       const toLabel = STAGES.find((s) => s.k === mutation.toStage)?.label ?? mutation.toStage;
@@ -235,6 +246,7 @@ export function PipelineKanban() {
           ms: 0,
           code: error.code,
           requestId: error.requestId,
+          opKey,
         },
       });
     });

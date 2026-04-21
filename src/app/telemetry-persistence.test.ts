@@ -10,6 +10,7 @@ import {
   deleteBatch,
   bumpAttempt,
   _clearForTests,
+  _trimRingForTests,
 } from './telemetry-persistence';
 import { _resetDbConnectionForTests } from '../domain/events';
 
@@ -42,6 +43,35 @@ describe('telemetry-persistence', () => {
     const [row] = await readPersistedBatches();
     await deleteBatch(row.id);
     expect(await readPersistedBatches()).toHaveLength(0);
+  });
+
+  it('H10: batches older than the 7-day TTL are evicted by trimRing even under MAX_ROWS', async () => {
+    // Persist one fresh row and one row that will age past the TTL when
+    // we trim. Direct IDB put-via-persist is wall-clock stamped at
+    // "now", so we advance the injected `now` used by trimRing instead
+    // of mocking the clock globally.
+    await persistBatch('{"fresh":1}');
+    await persistBatch('{"stale":1}');
+    const stamped = await readPersistedBatches();
+    expect(stamped).toHaveLength(2);
+
+    // 8 days after stamping: both rows are older than their own
+    // createdAt, so both should be evicted under the TTL.
+    const eightDaysLater = Date.now() + 8 * 24 * 60 * 60 * 1000;
+    await _trimRingForTests(eightDaysLater);
+    const after = await readPersistedBatches();
+    expect(after).toHaveLength(0);
+  });
+
+  it('H10: trimRing spares rows inside the TTL even when cap trim runs', async () => {
+    // All rows fit under MAX_ROWS and are well inside the 7-day TTL:
+    // nothing should be evicted.
+    for (let i = 0; i < 5; i++) {
+      await persistBatch(`{"i":${i}}`);
+    }
+    await _trimRingForTests(Date.now());
+    const rows = await readPersistedBatches();
+    expect(rows).toHaveLength(5);
   });
 
   it('many persisted batches survive the round-trip', async () => {

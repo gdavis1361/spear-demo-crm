@@ -18,7 +18,8 @@ import { recordVacuumOutcome } from '../domain/stats';
 import { Outbox } from '../domain/outbox';
 import { buildDispatcherRegistry } from '../domain/outbox-dispatchers';
 import { runScenario, scenarioName, type ScenarioName } from '../seeds';
-import { drainPersistedTelemetry } from './telemetry';
+import { drainPersistedTelemetry, _setLastOutboxDepth, track } from './telemetry';
+import { startSpan } from './observability';
 
 export const promiseStore = new PromiseStore(eventLog);
 export const scheduleRegistry = new ScheduleRegistry(eventLog);
@@ -89,7 +90,32 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   if (booted || typeof window === 'undefined') return;
   booted = true;
 
-  await promiseStore.ready;
+  const bootStart = performance.now();
+
+  // H7: per-stage timing. Each stage wraps in startSpan (H5 — no-op when
+  // Sentry is off) and emits `app.boot_stage_completed` with its duration,
+  // so a slow boot can be partitioned between "PromiseStore hydrate" vs
+  // "seed runner" vs "projection rehydrate". These are historically the
+  // three axes that cause user-perceptible boot slowness; before H7 we
+  // only had the outer app.mounted event, which bundled all of them.
+  type BootStageName =
+    | 'promise_store_ready'
+    | 'seed_scenario'
+    | 'deal_bootstrap'
+    | 'projection_rehydrate';
+
+  const runStage = async <T>(stage: BootStageName, fn: () => Promise<T>): Promise<T> => {
+    const t0 = performance.now();
+    const out = (await startSpan({ name: `boot.${stage}`, op: 'boot.stage' }, fn)) as T;
+    track({
+      name: 'app.boot_stage_completed',
+      props: { stage, ms: Math.round(performance.now() - t0) },
+    });
+    return out;
+  };
+
+  await runStage('promise_store_ready', () => promiseStore.ready);
+
   // Seed scenario. `runInvariants: false` because a user's local state may
   // have drifted (old build, deleted promise, vacuum) — in that case the
   // scenario's build short-circuits but the invariant would still throw
@@ -100,20 +126,40 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   // `setDbName()` before this module loads, so the eventLog + promiseStore
   // seen here are already bound to the isolated DB.
   const scenario = opts.scenario ?? scenarioName('canonical');
-  await runScenario(eventLog, { promiseStore }, scenario, {
-    runInvariants: false,
-  });
+  await runStage('seed_scenario', () =>
+    runScenario(eventLog, { promiseStore }, scenario, {
+      runInvariants: false,
+    })
+  );
 
   // Deal event-sourcing bootstrap. Seeds the static DEALS fixture into
   // the event log on first boot; no-op on subsequent boots. DealProjection
   // hydrates from the log after this lands.
-  await bootstrapDealsIfEmpty(eventLog);
-  await dealProjection.rehydrate();
-  await signalProjection.ready;
+  await runStage('deal_bootstrap', () => bootstrapDealsIfEmpty(eventLog));
+  await runStage('projection_rehydrate', async () => {
+    await dealProjection.rehydrate();
+    await signalProjection.ready;
+  });
 
   installPromiseTicker(promiseStore);
   registerSchedules();
   installOutboxDrainTriggers();
+
+  // Publish outbox depth into the ambient module so every telemetry
+  // envelope can carry `outboxDepth` via `baseContext()` (H2). Inverted
+  // dependency — telemetry exposes a setter, outbox is the source, the
+  // ambient mirror lives in `src/app/ambient.ts`. This keeps the durable
+  // layer out of the entry chunk.
+  //
+  // H4 piggy-backs on the same subscription: every snapshot change
+  // recomputes the (pending, permanent, oldest-age) triple and, if it
+  // *transitioned* across the health boundary (idle ↔ syncing ↔
+  // degraded), emits an `outbox.queue_status` event. A periodic 30s
+  // ticker re-emits while non-idle so a queue that sits at degraded for
+  // hours still shows up as an ongoing signal in Honeycomb — the SLO
+  // burn-rate rule is "any degraded event in the last window," so
+  // silence means green.
+  installOutboxQueueStatusTelemetry();
 
   // Vacuum runner pipes its outcome into stats so the debug pane has
   // "last vacuum" without coupling vacuum-runner to stats directly.
@@ -139,6 +185,27 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => void drainPersistedTelemetry());
   }
+
+  // H7: ship one `app.ready` event that carries both the total boot
+  // duration (measured here) and the first-paint duration (read from
+  // the Performance API). `totalMs` is the time-to-interactive SLI
+  // target — see docs/ops/slo.md. `firstPaintMs` is the independent
+  // browser signal we use when boot time balloons but TTI doesn't, so
+  // we can separate "expensive runtime" from "expensive paint".
+  let firstPaintMs = 0;
+  if (typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function') {
+    const paints = performance.getEntriesByType('paint');
+    const fp = paints.find((p) => p.name === 'first-paint' || p.name === 'first-contentful-paint');
+    if (fp) firstPaintMs = Math.round(fp.startTime);
+  }
+  track({
+    name: 'app.ready',
+    props: {
+      totalMs: Math.round(performance.now() - bootStart),
+      firstPaintMs,
+      scenario: opts.scenario ?? null,
+    },
+  });
 }
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
@@ -230,6 +297,116 @@ function installOutboxDrainTriggers(): void {
     },
   });
 }
+
+// ─── Outbox queue-status telemetry (H4) ────────────────────────────────────
+//
+// Two firing rules:
+//   1. *Transition* — the derived `status` (idle / syncing / degraded)
+//      crossed a boundary. Fires once per change. This is the signal an
+//      alert fires on (degraded-first, not every sample).
+//   2. *Periodic keepalive* — every 30s while non-idle. Honeycomb prefers
+//      wide events over time-series counters; the keepalive emits one
+//      event per window so a 20-minute-long degradation has 40 samples
+//      of shape and depth, not a single edge.
+//
+// Skipped when the browser is offline — we can't distinguish "sync stuck
+// on wire failure" from "user is on a plane" via the queue alone, and
+// `navigator.onLine === false` is the authoritative source for the
+// distinction. An `online` event will re-kick the drainer, which will
+// naturally re-evaluate status through this same subscriber.
+
+const QUEUE_STATUS_KEEPALIVE_MS = 30_000;
+const QUEUE_STATUS_DEGRADED_MS = 60_000;
+
+type QueueStatusComputed = {
+  readonly pending: number;
+  readonly permanent: number;
+  readonly oldestPendingAgeMs: number;
+  readonly status: 'idle' | 'syncing' | 'degraded';
+};
+
+function computeQueueStatus(
+  rows: ReadonlyArray<{ status: string; createdAt: string }>,
+  now: number
+): QueueStatusComputed {
+  let pending = 0;
+  let permanent = 0;
+  let oldest = 0;
+  for (const r of rows) {
+    if (r.status === 'pending' || r.status === 'in_flight') {
+      pending++;
+      const age = now - new Date(r.createdAt).getTime();
+      if (age > oldest) oldest = age;
+    } else if (r.status === 'permanent_failure') {
+      permanent++;
+    }
+  }
+  const status: QueueStatusComputed['status'] =
+    permanent > 0 || (pending > 0 && oldest > QUEUE_STATUS_DEGRADED_MS)
+      ? 'degraded'
+      : pending > 0
+        ? 'syncing'
+        : 'idle';
+  return { pending, permanent, oldestPendingAgeMs: oldest, status };
+}
+
+function installOutboxQueueStatusTelemetry(): void {
+  let lastStatus: QueueStatusComputed['status'] | null = null;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  const emit = (snap: QueueStatusComputed, reason: 'transition' | 'periodic'): void => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    track({
+      name: 'outbox.queue_status',
+      props: {
+        pending: snap.pending,
+        permanent: snap.permanent,
+        oldestPendingAgeMs: snap.oldestPendingAgeMs,
+        status: snap.status,
+        reason,
+      },
+    });
+  };
+
+  outbox.subscribe((rows) => {
+    const depth = rows.filter((r) => r.status === 'pending' || r.status === 'in_flight').length;
+    _setLastOutboxDepth(depth);
+    const snap = computeQueueStatus(rows, Date.now());
+    if (lastStatus !== snap.status) {
+      // Suppress the "null → idle" startup edge so an idle session
+      // emits zero queue_status events (advisor feedback). The first
+      // real transition is `idle → syncing` when a user action lands a
+      // mutation in the outbox, which is what we want dashboards keyed
+      // on. Non-idle boots (prior session left rows behind) still fire
+      // immediately because the initial snapshot is syncing/degraded.
+      const suppressInitial = lastStatus === null && snap.status === 'idle';
+      if (!suppressInitial) emit(snap, 'transition');
+      lastStatus = snap.status;
+    }
+    // Keepalive only runs while non-idle; arm/disarm as we transition
+    // into/out of idle so a healthy queue never touches the timer loop.
+    if (snap.status !== 'idle' && !keepaliveTimer) {
+      keepaliveTimer = setInterval(() => {
+        void outbox.all().then((all) => {
+          const latest = computeQueueStatus(all, Date.now());
+          if (latest.status === 'idle') {
+            if (keepaliveTimer) {
+              clearInterval(keepaliveTimer);
+              keepaliveTimer = null;
+            }
+            return;
+          }
+          emit(latest, 'periodic');
+        });
+      }, QUEUE_STATUS_KEEPALIVE_MS);
+    } else if (snap.status === 'idle' && keepaliveTimer) {
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = null;
+    }
+  });
+}
+
+export const _computeQueueStatusForTests = computeQueueStatus;
 
 // ─── Demo: kick a workflow run on boot so the Workflows tab has something ──
 //
