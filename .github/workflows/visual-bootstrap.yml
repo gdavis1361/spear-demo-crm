@@ -62,7 +62,7 @@ jobs:
         run: npm run test:visual:update
 
       - name: Open PR with refreshed baselines
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/rebaseline-visual-${{ github.run_id }}
           base: ${{ inputs.target_ref }}
