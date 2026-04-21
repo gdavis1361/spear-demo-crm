@@ -28,6 +28,7 @@ import {
   STORE_PROMISES,
   STORE_PROMISES_DLQ,
   STORE_LEGACY_ARCHIVE,
+  getDbName,
 } from './events';
 import {
   validateDurablePromise,
@@ -60,7 +61,10 @@ export interface DeadLetterPromise {
 
 // ─── Result types ──────────────────────────────────────────────────────────
 
-export interface PromiseOk<T = void> { readonly ok: true; readonly data: T }
+export interface PromiseOk<T = void> {
+  readonly ok: true;
+  readonly data: T;
+}
 export interface PromiseErr {
   readonly ok: false;
   readonly code: 'not_found' | 'invalid_state' | 'storage_error';
@@ -210,8 +214,15 @@ async function migrateLegacyBlob(): Promise<{ migrated: number; archived: boolea
 }
 
 // ─── Cross-tab broadcast ───────────────────────────────────────────────────
-
-const CHANNEL_NAME = 'spear:promises';
+//
+// Channel name is derived from the current DB name so a tab on
+// `/?seed=busy-rep` (DB: spear-events-seed-busy-rep) never hears broadcasts
+// from a tab on `/` (DB: spear-events). Mirrors the pattern in events.ts —
+// without this, two scenario tabs would invalidate each other's unrelated
+// caches.
+function channelName(): string {
+  return `spear:promises:${getDbName()}`;
+}
 
 // ─── Store ─────────────────────────────────────────────────────────────────
 
@@ -219,7 +230,7 @@ type Subscriber = (ps: readonly DurablePromise[]) => void;
 
 export class PromiseStore {
   private cache = new Map<string, DurablePromise>();
-  private dlq: DeadLetterPromise[] = [];        // hot cache; persistent copy in IDB
+  private dlq: DeadLetterPromise[] = []; // hot cache; persistent copy in IDB
   private subs = new Set<Subscriber>();
   private channel: BroadcastChannel | null = null;
   private channelHandler: ((e: MessageEvent<unknown>) => void) | null = null;
@@ -230,7 +241,7 @@ export class PromiseStore {
 
   constructor(private readonly log: EventLog) {
     if (typeof BroadcastChannel !== 'undefined') {
-      this.channel = new BroadcastChannel(CHANNEL_NAME);
+      this.channel = new BroadcastChannel(channelName());
       this.channelHandler = (e) => this.applyBroadcast(e.data);
       this.channel.addEventListener('message', this.channelHandler);
     }
@@ -254,7 +265,11 @@ export class PromiseStore {
     try {
       const { migrated: migratedFromLegacy } = await migrateLegacyBlob();
       // Hot DLQ from persistent store.
-      try { this.dlq = await dlqRead(); } catch { /* hydrate is best-effort */ }
+      try {
+        this.dlq = await dlqRead();
+      } catch {
+        /* hydrate is best-effort */
+      }
       const rows = await readAllRows();
       const newDlq: DeadLetterPromise[] = [];
       let quarantined = 0;
@@ -266,7 +281,12 @@ export class PromiseStore {
           quarantined++;
           const id = (r as { id?: string })?.id ?? `unknown_${quarantined}`;
           const reason = v.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-          const dlqRow: DeadLetterPromise = { id, raw: r, reason, quarantinedAt: new Date().toISOString() };
+          const dlqRow: DeadLetterPromise = {
+            id,
+            raw: r,
+            reason,
+            quarantinedAt: new Date().toISOString(),
+          };
           newDlq.push(dlqRow);
           this.dlq.push(dlqRow);
           track({ name: 'promise.row_quarantined', props: { id, reason } });
@@ -274,7 +294,11 @@ export class PromiseStore {
       }
       // Persist newly-quarantined rows.
       if (newDlq.length > 0) {
-        try { await dlqAppend(newDlq); } catch { /* DLQ write failure is non-fatal */ }
+        try {
+          await dlqAppend(newDlq);
+        } catch {
+          /* DLQ write failure is non-fatal */
+        }
       }
       const ms = Math.round((performance.now?.() ?? Date.now()) - t0);
       track({
@@ -310,39 +334,63 @@ export class PromiseStore {
   subscribe(fn: Subscriber): () => void {
     this.subs.add(fn);
     fn(this.snapshot());
-    return () => { this.subs.delete(fn); };
+    return () => {
+      this.subs.delete(fn);
+    };
   }
 
-  async create(input: Omit<DurablePromise, 'createdAt' | 'updatedAt' | 'status'>): Promise<PromiseResult<DurablePromise>> {
+  async create(
+    input: Omit<DurablePromise, 'createdAt' | 'updatedAt' | 'status'>
+  ): Promise<PromiseResult<DurablePromise>> {
     return withStreamLock(promiseStream(input.id), async () => {
       const createdAt = nowInstant();
       const p: DurablePromise = { ...input, createdAt, updatedAt: createdAt, status: 'pending' };
 
       const v = validateDurablePromise(p);
       if (!v.ok) {
-        return { ok: false, code: 'invalid_state', message: v.error.issues[0]?.message ?? 'invalid promise' };
+        return {
+          ok: false,
+          code: 'invalid_state',
+          message: v.error.issues[0]?.message ?? 'invalid promise',
+        };
       }
 
       // Cross-store atomic write — the row and its `promise.created` event
       // commit together. If the IDB tx fails, neither is visible.
       const result = await this.log.appendAndUpsert(
         promiseStream(p.id),
-        [{
-          opKey: `pr.create:${p.id}`,
-          payload: { kind: 'promise.created', at: createdAt, by: p.createdBy, text: p.text, dueAt: p.dueAt, escalateAt: p.escalateAt },
-        }],
+        [
+          {
+            opKey: `pr.create:${p.id}`,
+            payload: {
+              kind: 'promise.created',
+              at: createdAt,
+              by: p.createdBy,
+              text: p.text,
+              dueAt: p.dueAt,
+              escalateAt: p.escalateAt,
+            },
+          },
+        ],
         STORE_PROMISES,
-        p,
+        p
       );
       if (!result.ok) {
         return { ok: false, code: 'storage_error', message: result.message };
       }
 
       this.cache.set(p.id, p);
-      const minutesToDue = Math.round((new Date(p.dueAt.iso).getTime() - new Date(createdAt.iso).getTime()) / 60_000);
+      const minutesToDue = Math.round(
+        (new Date(p.dueAt.iso).getTime() - new Date(createdAt.iso).getTime()) / 60_000
+      );
       track({
         name: 'promise.created',
-        props: { id: p.id, nounKind: p.noun.kind, minutesToDue, hasEscalation: Boolean(p.escalateAt) },
+        props: {
+          id: p.id,
+          nounKind: p.noun.kind,
+          minutesToDue,
+          hasEscalation: Boolean(p.escalateAt),
+        },
       });
       this.broadcast({ kind: 'upsert', id: p.id, row: p });
       this.emit();
@@ -355,19 +403,25 @@ export class PromiseStore {
       const p = this.cache.get(id);
       if (!p) return { ok: false, code: 'not_found', message: `promise ${id} not found` };
       if (p.status !== 'pending') {
-        return { ok: false, code: 'invalid_state', message: `promise ${id} is ${p.status}, not pending` };
+        return {
+          ok: false,
+          code: 'invalid_state',
+          message: `promise ${id} is ${p.status}, not pending`,
+        };
       }
       const updated: DurablePromise = { ...p, status: 'kept', updatedAt: at };
       const result = await this.log.appendAndUpsert(
         promiseStream(id),
         [{ opKey: `pr.keep:${id}`, payload: { kind: 'promise.kept', at, by } }],
         STORE_PROMISES,
-        updated,
+        updated
       );
       if (!result.ok) return { ok: false, code: 'storage_error', message: result.message };
 
       this.cache.set(id, updated);
-      const minutesEarly = Math.round((new Date(p.dueAt.iso).getTime() - new Date(at.iso).getTime()) / 60_000);
+      const minutesEarly = Math.round(
+        (new Date(p.dueAt.iso).getTime() - new Date(at.iso).getTime()) / 60_000
+      );
       track({ name: 'promise.kept', props: { id, minutesEarly } });
       this.broadcast({ kind: 'upsert', id, row: updated });
       this.emit();
@@ -420,7 +474,7 @@ export class PromiseStore {
     id: string,
     next: PromiseStatus,
     at: Instant,
-    eventBuilder: () => { opKey: string; payload: import('./event-schema').ValidatedPayload },
+    eventBuilder: () => { opKey: string; payload: import('./event-schema').ValidatedPayload }
   ): Promise<boolean> {
     return withStreamLock(promiseStream(id), async () => {
       const cur = this.cache.get(id);
@@ -430,7 +484,7 @@ export class PromiseStore {
         promiseStream(id),
         [eventBuilder()],
         STORE_PROMISES,
-        updated,
+        updated
       );
       if (!result.ok) return false;
       this.cache.set(id, updated);
@@ -498,7 +552,12 @@ export class PromiseStore {
     const v = validateDurablePromise(msg.row);
     if (!v.ok) {
       const reason = v.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-      const dlqRow: DeadLetterPromise = { id: msg.id, raw: msg.row, reason, quarantinedAt: new Date().toISOString() };
+      const dlqRow: DeadLetterPromise = {
+        id: msg.id,
+        raw: msg.row,
+        reason,
+        quarantinedAt: new Date().toISOString(),
+      };
       this.dlq.push(dlqRow);
       void dlqAppend([dlqRow]).catch(() => undefined);
       track({ name: 'promise.row_quarantined', props: { id: msg.id, reason } });
@@ -519,7 +578,9 @@ export function installPromiseTicker(store: PromiseStore, intervalMs = 15_000): 
   installed = true;
 
   let handle: number | null = null;
-  const tick = () => { void store.tick(); };
+  const tick = () => {
+    void store.tick();
+  };
 
   const start = () => {
     if (handle !== null) return;
@@ -527,7 +588,10 @@ export function installPromiseTicker(store: PromiseStore, intervalMs = 15_000): 
     handle = window.setInterval(tick, intervalMs);
   };
   const stop = () => {
-    if (handle !== null) { clearInterval(handle); handle = null; }
+    if (handle !== null) {
+      clearInterval(handle);
+      handle = null;
+    }
   };
 
   start();

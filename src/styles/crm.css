@@ -444,6 +444,29 @@ button {
 .topbar-right .dot {
   color: var(--olive-500);
 }
+.topbar-right .dot.dot-syncing {
+  color: var(--amber-800);
+  animation: outbox-pulse 1.4s ease-in-out infinite;
+}
+.topbar-right .dot.dot-degraded {
+  color: var(--accent);
+  animation: outbox-pulse 0.9s ease-in-out infinite;
+}
+@keyframes outbox-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar-right .dot.dot-syncing,
+  .topbar-right .dot.dot-degraded {
+    animation: none;
+  }
+}
 .topbar-right .who {
   display: flex;
   align-items: center;
@@ -3020,6 +3043,16 @@ table.pipe-table td.num {
   text-align: right;
   letter-spacing: 0.04em;
 }
+.sig-row.done .line,
+.sig-row.done .lane {
+  text-decoration: line-through;
+  color: var(--fg-muted);
+}
+.sig-row.done .age,
+.sig-row.done .kind,
+.sig-row.done .id {
+  opacity: 0.55;
+}
 
 .sig-detail {
   overflow: auto;
@@ -3725,7 +3758,15 @@ table.pipe-table td.num {
   font-size: 12.5px;
 }
 
-/* Responsive safety */
+/* Responsive safety.
+ *
+ * VX7: the signals detail pane (Dismiss / Mute / Actioned controls)
+ * used to be `display: none` below 1281px, which made the feature
+ * literally unreachable on a default 1280×720 laptop viewport. Stack
+ * the detail below the list instead so every interaction is always
+ * reachable — the rep on a smaller screen sees the same affordances,
+ * just top-to-bottom. `.sig-list` drops its right-side border since
+ * it's no longer the left column of a two-column grid. */
 @media (max-width: 1280px) {
   .focus-side {
     display: none;
@@ -3733,11 +3774,17 @@ table.pipe-table td.num {
   .focus-grid {
     grid-template-columns: 1fr;
   }
-  .sig-detail {
-    display: none;
-  }
   .sig-body {
     grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
+  .sig-list {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    max-height: 50vh;
+  }
+  .sig-detail {
+    border-top: 1px solid var(--rule);
   }
 }
 

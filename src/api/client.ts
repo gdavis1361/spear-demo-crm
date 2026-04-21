@@ -2,6 +2,18 @@
 // idempotency key. Every response is a Result<T>. Every error has a code,
 // a requestId, and a docsUrl.
 //
+// Retry policy:
+//   - GETs retry on 5xx + network via `maxRetries` (default 2) with
+//     exponential backoff. This is pure read-side reliability and has
+//     no server-state side effects.
+//   - Mutations go through the durable outbox in `src/domain/outbox.ts`
+//     (see `src/domain/outbox-dispatchers.ts`). The outbox sets
+//     `maxRetries: 0` at its call site so retries happen exactly once —
+//     in the outbox, where they're durable across refresh and coordinated
+//     cross-tab via `navigator.locks`. Any NEW mutation call MUST be added
+//     to the OutboxMutation union + dispatcher, not introduced as an
+//     ad-hoc `api.post` call — there's no dual retry surface.
+//
 // In this demo, `fetch` targets `MOCK_API` which the mock server (see
 // `./mock-server.ts`) intercepts. Swap that for a real base URL in prod.
 
@@ -61,6 +73,10 @@ async function request<T>(
         requestId: reqId,
         docsUrl: docsUrlFor(body400.code ?? mapHttpToCode(res.status)),
         param: body400.param,
+        // VX3: surface `Retry-After` so the outbox (or any caller) can
+        // respect server backpressure. Spec allows either seconds or an
+        // HTTP-date; parse both.
+        retryAfterMs: parseRetryAfter(res.headers.get('Retry-After')),
       };
 
       // Don't retry 4xx.
@@ -92,6 +108,19 @@ async function request<T>(
   }
 }
 
+/**
+ * Parse `Retry-After`. RFC 7231 allows delta-seconds or HTTP-date.
+ * Returns ms-since-now, clamped to zero, or undefined if unparseable/absent.
+ */
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const secs = Number(header);
+  if (Number.isFinite(secs) && secs >= 0) return Math.floor(secs * 1000);
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
+
 function mapHttpToCode(status: number): ErrorCode {
   if (status === 401) return 'unauthenticated';
   if (status === 403) return 'permission_denied';
@@ -117,8 +146,10 @@ function isAbort(cause: unknown): boolean {
 }
 
 export const api = {
-  get:    <T>(path: string,                       opts?: RequestOptions) => request<T>('GET',    path, undefined, opts),
-  post:   <T>(path: string, body: unknown,        opts?: RequestOptions) => request<T>('POST',   path, body,      opts),
-  patch:  <T>(path: string, body: unknown,        opts?: RequestOptions) => request<T>('PATCH',  path, body,      opts),
-  delete: <T>(path: string,                       opts?: RequestOptions) => request<T>('DELETE', path, undefined, opts),
+  get: <T>(path: string, opts?: RequestOptions) => request<T>('GET', path, undefined, opts),
+  post: <T>(path: string, body: unknown, opts?: RequestOptions) =>
+    request<T>('POST', path, body, opts),
+  patch: <T>(path: string, body: unknown, opts?: RequestOptions) =>
+    request<T>('PATCH', path, body, opts),
+  delete: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, undefined, opts),
 };

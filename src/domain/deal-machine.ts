@@ -16,15 +16,19 @@ import type { ErrorCode } from '../api/errors';
 
 /**
  * Graph of allowed stage transitions. Edges only — no self-loops.
- * `won` and `lost` are terminal.
+ * `lost` is terminal; `won` permits a one-step revert to `verbal` so a
+ * signed deal can be un-signed when the contract falls through
+ * (customer backs out, legal blocks, etc). Realistic CRM behavior —
+ * and it lets the outbox compensator revert a server-refused
+ * `verbal → won` without silently lying about local state (VX6).
  */
 export const TRANSITIONS: Readonly<Record<StageKey, readonly StageKey[]>> = {
   inbound: ['qualify'],
-  qualify: ['scoping', 'inbound'],               // revert-one-step is allowed
+  qualify: ['scoping', 'inbound'], // revert-one-step is allowed
   scoping: ['quote', 'qualify'],
-  quote:   ['verbal', 'scoping'],
-  verbal:  ['won', 'quote'],                     // re-quote path
-  won:     [],                                   // terminal
+  quote: ['verbal', 'scoping'],
+  verbal: ['won', 'quote'], // re-quote path
+  won: ['verbal'], // un-sign when a contract falls through
 } as const;
 
 export function canTransition(from: StageKey, to: StageKey): boolean {
@@ -37,8 +41,16 @@ export function transitionKind(from: StageKey, to: StageKey): 'advanced' | 'reve
   return forward.indexOf(to) > forward.indexOf(from) ? 'advanced' : 'reverted';
 }
 
-export interface TransitionOk { ok: true; id: string; seq: number }
-export interface TransitionErr { ok: false; code: ErrorCode; message: string }
+export interface TransitionOk {
+  ok: true;
+  id: string;
+  seq: number;
+}
+export interface TransitionErr {
+  ok: false;
+  code: ErrorCode;
+  message: string;
+}
 export type TransitionResult = TransitionOk | TransitionErr;
 
 export interface DealTransition {
@@ -75,7 +87,11 @@ export async function runTransition(
   at: Instant = nowInstant()
 ): Promise<TransitionResult> {
   if (t.from === t.to) {
-    return { ok: false, code: 'stage_transition_invalid', message: `No-op transition from ${t.from}` };
+    return {
+      ok: false,
+      code: 'stage_transition_invalid',
+      message: `No-op transition from ${t.from}`,
+    };
   }
   if (!canTransition(t.from, t.to)) {
     return {
@@ -98,7 +114,14 @@ export async function runTransition(
           payload:
             kind === 'advanced'
               ? { kind: 'deal.advanced', at, by: t.by, from: t.from, to: t.to, reason: t.reason }
-              : { kind: 'deal.reverted', at, by: t.by, from: t.from, to: t.to, reason: t.reason ?? 'n/a' },
+              : {
+                  kind: 'deal.reverted',
+                  at,
+                  by: t.by,
+                  from: t.from,
+                  to: t.to,
+                  reason: t.reason ?? 'n/a',
+                },
         },
       ],
       (existing) => projectedStageMatches(existing, t.from)
@@ -106,8 +129,11 @@ export async function runTransition(
 
     if (!result.ok) {
       const code: ErrorCode =
-        result.code === 'optimistic_lock_failure' ? 'optimistic_lock_failure' :
-        result.code === 'invalid_payload' ? 'invalid_request' : 'internal_error';
+        result.code === 'optimistic_lock_failure'
+          ? 'optimistic_lock_failure'
+          : result.code === 'invalid_payload'
+            ? 'invalid_request'
+            : 'internal_error';
       return { ok: false, code, message: result.message };
     }
     const e = result.events[0];

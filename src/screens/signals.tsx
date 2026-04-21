@@ -1,13 +1,15 @@
 import React from 'react';
 import { ArrowRight, EyeOff, BellOff, Check } from 'lucide-react';
 import { Noun } from '../components/nouns';
-import type { SignalId } from '../lib/types';
-import { fromDisplayId, newIdempotencyKey } from '../lib/ids';
-import { dismissSignal, actionSignal } from '../api/mutations';
+import { newIdempotencyKey, repId } from '../lib/ids';
 import { track } from '../app/telemetry';
-import { scheduleRegistry } from '../app/runtime';
-import { ageShort } from '../lib/time';
+import { scheduleRegistry, outbox, signalProjection } from '../app/runtime';
+import { eventLog } from '../domain/events';
+import { signalStream } from '../domain/events';
+import { useAnnounce } from '../lib/live-region';
+import { ageShort, now as nowInstant } from '../lib/time';
 import { SIGNALS, type SignalKind, type SignalPriority } from './signals.data';
+import type { ProjectedSignal } from '../domain/signal-projection';
 
 type FilterKey = 'all' | SignalPriority | SignalKind;
 
@@ -22,9 +24,85 @@ const KINDS: Record<SignalKind, { c: string; lbl: string }> = {
   PARTNER: { c: 'accent', lbl: 'PARTNER-OPS' },
 };
 
+// Dismiss/action click path. Writes a durable local event FIRST so the
+// projection updates before the server call is even dispatched — the
+// rep sees immediate visual feedback. The outbox then owns server sync,
+// retries, and (on permanent failure) appends the compensating revert.
+//
+// Hoisted out of the component to keep the dependency list on
+// `useEffect`s honest — the handlers close over `setSelected` + stable
+// refs (list, visible, announce) passed as args.
+async function markSignal(
+  verb: 'dismiss' | 'action',
+  target: ProjectedSignal,
+  list: readonly ProjectedSignal[],
+  visible: readonly ProjectedSignal[],
+  setSelected: (id: string) => void,
+  announce: (msg: string) => void
+): Promise<void> {
+  const at = nowInstant();
+  const by = repId('rep_mhall');
+  const payload =
+    verb === 'dismiss'
+      ? { kind: 'signal.dismissed' as const, at, by }
+      : { kind: 'signal.actioned' as const, at, by };
+  const opKey = newIdempotencyKey();
+
+  // Single idempotency key shared by the local event AND the server call.
+  // Same key on retry → the log refuses the second write (UNIQUE on
+  // stream + opKey), and the server's Idempotency-Key dedupe covers the
+  // wire.
+  const local = await eventLog.append(signalStream(target.id), [{ opKey, payload }]);
+  if (!local.ok) {
+    announce(`Could not ${verb} signal ${target.id}: ${local.code}.`);
+    console.warn(
+      `[signals] local ${verb} refused for ${target.id}: ${local.code} — ${local.message}`
+    );
+    return;
+  }
+
+  // Dismiss moves the detail-pane selection forward so the rep doesn't
+  // stare at the row they just hid. Action leaves selection in place —
+  // the row stays visible with a "done" mark.
+  if (verb === 'dismiss') {
+    const nextSelected =
+      list.find((s) => s.id !== target.id)?.id ??
+      visible.find((s) => s.id !== target.id)?.id ??
+      target.id;
+    setSelected(nextSelected);
+  }
+
+  announce(verb === 'dismiss' ? `Dismissed signal ${target.id}.` : `Actioned signal ${target.id}.`);
+  track({
+    name: verb === 'dismiss' ? 'signal.dismissed' : 'signal.actioned',
+    props: { id: target.id, requestId: 'local' },
+  });
+
+  await outbox.enqueue(
+    verb === 'dismiss'
+      ? { kind: 'dismiss_signal', signalId: target.id }
+      : { kind: 'action_signal', signalId: target.id },
+    opKey
+  );
+  void outbox.drain();
+}
+
+// `useSignalProjection` subscribes to the durable projection. The
+// returned snapshot is stable within a render pass — React bails out of
+// re-renders when `Object.is` deems the array identical, and the
+// projection emits a fresh array only when a mark event lands.
+function useSignalProjection(): readonly ProjectedSignal[] {
+  const [snap, setSnap] = React.useState<readonly ProjectedSignal[]>(() => signalProjection.list());
+  React.useEffect(() => {
+    return signalProjection.subscribe((next) => setSnap(next));
+  }, []);
+  return snap;
+}
+
 export function Signals() {
   const [filter, setFilter] = React.useState<FilterKey>('all');
   const [selected, setSelected] = React.useState<string>(SIGNALS[0].id);
+  const announce = useAnnounce();
   // Index of the row that currently holds the row-level tab stop. The grid
   // uses a single tab stop (roving tabindex) so Tab/Shift+Tab move users
   // out of the grid instead of tabbing through every row; once focus lands
@@ -32,19 +110,46 @@ export function Signals() {
   const [focusIdx, setFocusIdx] = React.useState(0);
   const gridRef = React.useRef<HTMLDivElement>(null);
 
+  // Live projection snapshot — the single source of truth for mark state.
+  // Dismiss/action events (ours + the outbox compensator's reverts) flow
+  // through this hook into the render.
+  const projected = useSignalProjection();
+  const visible = React.useMemo(() => projected.filter((s) => s.mark !== 'dismissed'), [projected]);
+
   const list =
     filter === 'all'
-      ? SIGNALS
+      ? visible
       : filter === 'p0'
-        ? SIGNALS.filter((s) => s.priority === 'p0')
-        : SIGNALS.filter((s) => s.kind === filter);
+        ? visible.filter((s) => s.priority === 'p0')
+        : visible.filter((s) => s.kind === filter);
 
-  const cur = SIGNALS.find((s) => s.id === selected) || SIGNALS[0];
+  const cur = visible.find((s) => s.id === selected) ?? list[0] ?? visible[0] ?? projected[0];
 
   // Clamp focusIdx if the filter shrinks the list past the focused row.
   React.useEffect(() => {
     if (focusIdx >= list.length && list.length > 0) setFocusIdx(list.length - 1);
   }, [list.length, focusIdx]);
+
+  // Permanent outbox failures announce the revert. The projection has
+  // already flipped the row back via the compensator's append — we only
+  // owe the user a screen-reader cue so the visual un-revert doesn't land
+  // silently.
+  React.useEffect(() => {
+    return outbox.onFailure((mutation, error, compensation) => {
+      if (mutation.kind !== 'dismiss_signal' && mutation.kind !== 'action_signal') return;
+      const verb = mutation.kind === 'dismiss_signal' ? 'Dismiss' : 'Action';
+      if (compensation.status === 'compensated') {
+        announce(`${verb} failed for signal ${mutation.signalId}: reverted.`);
+      } else {
+        announce(
+          `${verb} failed for signal ${mutation.signalId}: ${error.code}. Could not revert locally — refresh to resync.`
+        );
+      }
+      console.warn(
+        `[signals] ${mutation.kind} permanent failure for ${mutation.signalId}: ${error.code} — ${error.message} compensation=${compensation.status}`
+      );
+    });
+  }, [announce]);
 
   // After focusIdx changes (via keyboard nav), move DOM focus to match.
   // Mouse interactions that change focusIdx via onFocus don't need this
@@ -84,12 +189,12 @@ export function Signals() {
   };
 
   const counts = {
-    all: SIGNALS.length,
-    p0: SIGNALS.filter((s) => s.priority === 'p0').length,
-    CYCLE: SIGNALS.filter((s) => s.kind === 'CYCLE').length,
-    COMPETITOR: SIGNALS.filter((s) => s.kind === 'COMPETITOR').length,
-    SIGNAL: SIGNALS.filter((s) => s.kind === 'SIGNAL' || s.kind === 'SPOUSE').length,
-    GSA: SIGNALS.filter((s) => s.kind === 'GSA').length,
+    all: visible.length,
+    p0: visible.filter((s) => s.priority === 'p0').length,
+    CYCLE: visible.filter((s) => s.kind === 'CYCLE').length,
+    COMPETITOR: visible.filter((s) => s.kind === 'COMPETITOR').length,
+    SIGNAL: visible.filter((s) => s.kind === 'SIGNAL' || s.kind === 'SPOUSE').length,
+    GSA: visible.filter((s) => s.kind === 'GSA').length,
   };
 
   return (
@@ -185,16 +290,21 @@ export function Signals() {
             const k = KINDS[s.kind];
             const isSelected = s.id === selected;
             const isTabStop = idx === focusIdx;
+            const isActioned = s.mark === 'actioned';
             return (
               <div
                 key={s.id}
                 role="row"
                 aria-selected={isSelected}
                 aria-rowindex={idx + 1}
-                aria-label={`Signal ${s.id}: ${s.headline}`}
+                aria-label={
+                  isActioned
+                    ? `Signal ${s.id}, actioned: ${s.headline}`
+                    : `Signal ${s.id}: ${s.headline}`
+                }
                 tabIndex={isTabStop ? 0 : -1}
                 data-row-idx={idx}
-                className={`sig-row${isSelected ? ' on' : ''}${s.priority === 'p0' ? ' p0' : ''}`}
+                className={`sig-row${isSelected ? ' on' : ''}${s.priority === 'p0' ? ' p0' : ''}${isActioned ? ' done' : ''}`}
                 onClick={() => setSelected(s.id)}
                 onFocus={() => setFocusIdx(idx)}
               >
@@ -303,14 +413,9 @@ export function Signals() {
             <button
               type="button"
               className="btn"
-              onClick={async () => {
-                const sid = fromDisplayId<SignalId>(cur.id);
-                const res = await dismissSignal(sid, undefined, newIdempotencyKey());
-                if (res.ok)
-                  track({
-                    name: 'signal.dismissed',
-                    props: { id: cur.id, requestId: res.requestId },
-                  });
+              disabled={cur.mark !== 'none'}
+              onClick={() => {
+                void markSignal('dismiss', cur, list, visible, setSelected, announce);
               }}
             >
               <EyeOff className="ic-sm" aria-hidden="true" />
@@ -323,14 +428,9 @@ export function Signals() {
             <button
               type="button"
               className="btn primary"
-              onClick={async () => {
-                const sid = fromDisplayId<SignalId>(cur.id);
-                const res = await actionSignal(sid, newIdempotencyKey());
-                if (res.ok)
-                  track({
-                    name: 'signal.actioned',
-                    props: { id: cur.id, requestId: res.requestId },
-                  });
+              disabled={cur.mark !== 'none'}
+              onClick={() => {
+                void markSignal('action', cur, list, visible, setSelected, announce);
               }}
             >
               <Check className="ic-sm" aria-hidden="true" />

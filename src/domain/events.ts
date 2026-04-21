@@ -33,6 +33,7 @@ import type {
   PromiseEvent as _PromiseEvent,
   ScheduleEvent as _ScheduleEvent,
   WorkflowRunEvent as _WorkflowRunEvent,
+  SignalEvent as _SignalEvent,
 } from './event-types';
 
 export type {
@@ -41,6 +42,7 @@ export type {
   PromiseEvent,
   ScheduleEvent,
   WorkflowRunEvent,
+  SignalEvent,
   DomainEvent,
   EventName,
 } from './event-types';
@@ -55,6 +57,7 @@ export const workflowRunStream = (wf: string, run: string) =>
   `workflow:${wf}:run:${run}` as StreamKey;
 export const promiseStream = (id: string) => `promise:${id}` as StreamKey;
 export const scheduleStream = (name: string) => `schedule:${name}` as StreamKey;
+export const signalStream = (id: SignalId | string) => `signal:${id}` as StreamKey;
 
 // ─── Envelope ──────────────────────────────────────────────────────────────
 
@@ -312,12 +315,14 @@ function byUlid(a: StoredEvent, b: StoredEvent): number {
 // without pulling Zod schemas into the initial JS chunk. `openDb()` below
 // calls `lockDbName()` on its first successful run so `setDbName()`
 // becomes a no-op after that point.
-const DB_VERSION = 4;
+const DB_VERSION = 6;
 const STORE = 'events';
 const STORE_DLQ = 'events_dlq';
 export const STORE_PROMISES = 'promises';
 export const STORE_PROMISES_DLQ = 'promises_dlq';
 export const STORE_LEGACY_ARCHIVE = '_legacy_archive';
+export const STORE_OUTBOX = 'outbox';
+export const STORE_TELEMETRY = 'telemetry_buffer';
 
 /**
  * Versioned migrations. Each branch is idempotent so re-runs are safe.
@@ -364,6 +369,29 @@ function applyMigrations(db: IDBDatabase, tx: IDBTransaction, oldVersion: number
     if (db.objectStoreNames.contains(STORE_PROMISES)) {
       const ps = tx.objectStore(STORE_PROMISES);
       if (!ps.indexNames.contains('updated_at')) ps.createIndex('updated_at', 'updatedAt.iso');
+    }
+  }
+  if (oldVersion < 5) {
+    // v5: durable outbox for server-bound mutations. One row per enqueued
+    // mutation; keyed on opKey so enqueues are idempotent and the server's
+    // Idempotency-Key never drifts from the row it represents. Indexes:
+    //   - `status_next`: cheap "what's due to retry?" lookups
+    //   - `created_at`: drives the 24h stale-threshold sweep
+    if (!db.objectStoreNames.contains(STORE_OUTBOX)) {
+      const ob = db.createObjectStore(STORE_OUTBOX, { keyPath: 'opKey' });
+      ob.createIndex('status_next', ['status', 'nextAttemptAt']);
+      ob.createIndex('created_at', 'createdAt');
+    }
+  }
+  if (oldVersion < 6) {
+    // v6: telemetry ring buffer (VX10). Survives a POST failure or tab
+    // crash so the events we most want after an incident — the ones
+    // that *preceded* the incident — don't die with the session.
+    // `createdAt` index lets the flush read in insertion order and the
+    // ring trim evict oldest.
+    if (!db.objectStoreNames.contains(STORE_TELEMETRY)) {
+      const tb = db.createObjectStore(STORE_TELEMETRY, { keyPath: 'id' });
+      tb.createIndex('created_at', 'createdAt');
     }
   }
 }

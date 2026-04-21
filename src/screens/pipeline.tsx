@@ -3,12 +3,12 @@ import { MoreHorizontal, Filter, Download, Plus, MoveRight } from 'lucide-react'
 import { STAGES } from '../lib/data';
 import type { Deal, PipeLayout, StageKey } from '../lib/types';
 import { formatMoneyShort } from '../lib/money';
-import { advanceDeal } from '../api/mutations';
 import { newIdempotencyKey, repId } from '../lib/ids';
 import { track } from '../app/telemetry';
 import { isEnabled } from '../app/flags';
 import { canTransition, runTransition } from '../domain/deal-machine';
 import { eventLog } from '../domain/events';
+import { outbox } from '../app/runtime';
 import { useDeals } from '../app/use-deals';
 import { useAnnounce } from '../lib/live-region';
 
@@ -161,42 +161,84 @@ export function PipelineKanban() {
       track({ name: 'pipeline.card_moved', props: { dealId: id, from, to, optimistic: true } });
       // Announce the optimistic success now, not after the server confirms.
       // Screen reader users expect feedback at the same latency sighted
-      // users get the visual update; if the server reverts, the rollback
-      // path below announces that separately.
+      // users get the visual update; permanent server failure is announced
+      // separately via the outbox.onFailure subscription below.
       announce(`Moved ${prev.title} from ${fromLabel} to ${toLabel}.`);
 
-      const res = await advanceDeal(prev.dealId, to, opKey);
-      const ms = Math.round(performance.now() - t0);
-
-      if (!res.ok) {
-        // Compensating revert: appends a `deal.reverted` event; projection
-        // snaps the card back to its original stage on the next subscription
-        // tick.
-        void runTransition(eventLog, {
-          id: prev.dealId,
-          from: to,
-          to: from,
-          by: repId('rep_mhall'),
-          role: 'rep',
-          reason: `rolled back: ${res.error.code}`,
-        });
-        track({
-          name: 'pipeline.card_moved_failed',
-          props: { dealId: id, from, to, ms, code: res.error.code, requestId: res.requestId },
-        });
-        console.warn(
-          `[pipeline] move rolled back: ${res.error.code} — ${res.error.message} (req_id=${res.requestId})`
-        );
-        announce(`Move failed. ${prev.title} returned to ${fromLabel}.`);
-        return;
-      }
-      track({
-        name: 'pipeline.card_moved_confirmed',
-        props: { dealId: id, from, to, ms, requestId: res.requestId },
-      });
+      // Hand ownership of the server call to the durable outbox. It owns
+      // retries, backoff, cross-tab coordination, and — on permanent
+      // failure — writing the compensating `deal.reverted` event (see
+      // outbox-dispatchers.ts). The drainer fires immediately; this await
+      // resolves before network activity even starts.
+      await outbox.enqueue(
+        { kind: 'advance_deal', dealId: prev.dealId, toStage: to, fromStage: from },
+        opKey
+      );
+      void outbox.drain();
     },
     [deals, announce]
   );
+
+  // VX5: restore `pipeline.card_moved_confirmed` telemetry. The outbox
+  // owns server-sync now, so the confirmation event can't fire inline at
+  // the click handler anymore — it fires here, once the dispatcher
+  // returns ok. Dashboards keying on this event keep working unchanged.
+  React.useEffect(() => {
+    return outbox.onSuccess((mutation, _attempts, requestId) => {
+      if (mutation.kind !== 'advance_deal') return;
+      track({
+        name: 'pipeline.card_moved_confirmed',
+        props: {
+          dealId: mutation.dealId,
+          from: mutation.fromStage,
+          to: mutation.toStage,
+          // We lost inline latency measurement when the API call moved
+          // to the outbox. 0 is the honest placeholder until VX5 grows
+          // enqueue→confirm timing as a first-class metric.
+          ms: 0,
+          requestId: requestId ?? 'unknown',
+        },
+      });
+    });
+  }, []);
+
+  // Announce permanent outbox failures that belong to this screen. When
+  // the compensator succeeded (status='compensated') we tell the user the
+  // card returned to its original stage, matching the visual snap-back
+  // the projection has already done. When the compensator refused (e.g.
+  // the destination was terminal, or a sibling tab moved the deal
+  // further), we announce that the local stage is stale instead — a
+  // false "returned to X" would itself be the bug.
+  React.useEffect(() => {
+    return outbox.onFailure((mutation, error, compensation) => {
+      if (mutation.kind !== 'advance_deal') return;
+      const fromLabel = STAGES.find((s) => s.k === mutation.fromStage)?.label ?? mutation.fromStage;
+      const toLabel = STAGES.find((s) => s.k === mutation.toStage)?.label ?? mutation.toStage;
+      const deal = deals.find((d) => d.dealId === mutation.dealId);
+      const title = deal?.title ?? mutation.dealId;
+      console.warn(
+        `[pipeline] outbox permanent failure for ${mutation.dealId}: ${error.code} — ${error.message} (req_id=${error.requestId}) compensation=${compensation.status}`
+      );
+      if (compensation.status === 'compensated') {
+        announce(`Move failed. ${title} returned to ${fromLabel}.`);
+      } else {
+        announce(
+          `Move failed for ${title} at ${toLabel}. Server rejected and local stage could not be reverted — refresh to resync.`
+        );
+      }
+      track({
+        name: 'pipeline.card_moved_failed',
+        props: {
+          dealId: mutation.dealId,
+          from: mutation.fromStage,
+          to: mutation.toStage,
+          ms: 0,
+          code: error.code,
+          requestId: error.requestId,
+        },
+      });
+    });
+  }, [announce, deals]);
 
   const onDragStart = (e: React.DragEvent, id: string) => {
     setDragId(id);

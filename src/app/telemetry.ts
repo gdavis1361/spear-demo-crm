@@ -7,6 +7,13 @@
 
 import type { Screen } from '../lib/types';
 import type { ErrorCode } from '../api/errors';
+import {
+  persistBatch,
+  readPersistedBatches,
+  deleteBatch,
+  bumpAttempt,
+  type PersistedBatch,
+} from './telemetry-persistence';
 
 // ─── Event catalogue ───────────────────────────────────────────────────────
 
@@ -94,7 +101,19 @@ export type TrackEvent =
   | {
       name: 'seed.scenario_stale';
       props: { scenario: string; declaredVersion: number; currentVersion: number };
-    };
+    }
+  // Outbox (durable mutation queue). Ties mutation-delivery health to the
+  // SLO dashboard so a silent backlog is visible before a user notices.
+  | { name: 'outbox.mutation_succeeded'; props: { kind: string; attempts: number } }
+  | {
+      name: 'outbox.mutation_retry_scheduled';
+      props: { kind: string; attempts: number; nextAttemptInMs: number; code: string };
+    }
+  | {
+      name: 'outbox.mutation_permanent_failure';
+      props: { kind: string; attempts: number; code: string; requestId: string };
+    }
+  | { name: 'outbox.orphan_recovered'; props: { kind: string; ageMs: number } };
 
 export type TrackEventName = TrackEvent['name'];
 
@@ -152,8 +171,14 @@ export function flush(sync = false): void {
   const payload = JSON.stringify({ events: buffer.splice(0, buffer.length) });
 
   if (sync && 'sendBeacon' in navigator) {
+    // sendBeacon returns true only if the UA queued the request. If it
+    // refuses (payload too large, closed connection), fall through to
+    // persist so the events survive pagehide → next boot.
     const blob = new Blob([payload], { type: 'application/json' });
-    navigator.sendBeacon('/telemetry', blob);
+    const queued = navigator.sendBeacon('/telemetry', blob);
+    if (!queued) {
+      void persistBatch(payload);
+    }
     return;
   }
 
@@ -164,15 +189,57 @@ export function flush(sync = false): void {
     return;
   }
 
-  // Production: fire-and-forget
+  // Production: POST, and on failure persist to the IDB ring so the
+  // events survive reload (VX10). `keepalive: true` lets the request
+  // outlive a page transition; `.catch` now writes durably instead of
+  // silently dropping — the most valuable telemetry is the telemetry
+  // you can't get after the fact.
   void fetch('/telemetry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: payload,
     keepalive: true,
-  }).catch(() => {
-    /* swallow — telemetry should never break the app */
-  });
+  })
+    .then((res) => {
+      if (!res.ok) void persistBatch(payload);
+    })
+    .catch(() => {
+      void persistBatch(payload);
+    });
+}
+
+/**
+ * Drain any telemetry batches that a previous session persisted after a
+ * POST failure. Called at boot from `bootRuntime`. Each batch retries
+ * independently; successful batches are removed, failures bump
+ * `attemptCount` for observability and stay persisted until a future
+ * drain succeeds.
+ */
+export async function drainPersistedTelemetry(): Promise<void> {
+  const rows = await readPersistedBatches();
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    try {
+      const res = await fetch('/telemetry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: row.payload,
+        keepalive: true,
+      });
+      if (res.ok) {
+        await deleteBatch(row.id);
+      } else {
+        await bumpAttempt(row);
+      }
+    } catch {
+      await bumpAttempt(row);
+    }
+  }
+}
+
+/** Test helper: expose the persisted batches for assertions. */
+export async function _readPersistedForTests(): Promise<readonly PersistedBatch[]> {
+  return readPersistedBatches();
 }
 
 // Flush on page hide / unload.

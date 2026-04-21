@@ -66,6 +66,7 @@ const REVERT_EDGES: ReadonlyArray<readonly [string, string]> = [
   ['scoping', 'qualify'],
   ['quote', 'scoping'],
   ['verbal', 'quote'],
+  ['won', 'verbal'], // VX6: un-sign a deal (contract falls through)
 ] as const;
 
 const DealAdvanced = z
@@ -151,6 +152,35 @@ const AccountClaimResolved = z.object({
   resolvedInMs: z.number().int().nonnegative(),
 });
 
+// Signal events. Dismiss + action are user-driven marks layered on top of
+// the static signal fixture; reverts exist so the outbox compensator can
+// undo them on permanent server failure (mirrors deal.advanced /
+// deal.reverted). `by` is optional because cross-tab replays preserve the
+// original author implicitly — the data is on the preceding event.
+const SignalDismissed = z.object({
+  kind: z.literal('signal.dismissed'),
+  at: Instant,
+  by: RepId,
+  reason: z.string().optional(),
+});
+const SignalDismissReverted = z.object({
+  kind: z.literal('signal.dismiss_reverted'),
+  at: Instant,
+  by: RepId,
+  reason: z.string(),
+});
+const SignalActioned = z.object({
+  kind: z.literal('signal.actioned'),
+  at: Instant,
+  by: RepId,
+});
+const SignalActionReverted = z.object({
+  kind: z.literal('signal.action_reverted'),
+  at: Instant,
+  by: RepId,
+  reason: z.string(),
+});
+
 const PromiseCreated = z.object({
   kind: z.literal('promise.created'),
   at: Instant,
@@ -230,7 +260,7 @@ const WorkflowRunCompensated = z.object({
 
 const Stream = z
   .string()
-  .regex(/^(deal|account|promise|schedule|workflow):/, 'invalid stream prefix');
+  .regex(/^(deal|account|promise|schedule|workflow|signal):/, 'invalid stream prefix');
 
 // Discriminated union over `kind`. Zod picks the right schema by literal.
 // Each event then gets the `stream` tag added by the unioned wrapper below.
@@ -261,6 +291,10 @@ const Payload = z.discriminatedUnion('kind', [
   WorkflowStepFailed,
   WorkflowRunCompleted,
   WorkflowRunCompensated,
+  SignalDismissed,
+  SignalDismissReverted,
+  SignalActioned,
+  SignalActionReverted,
 ]);
 
 export const EventEnvelope = z.object({

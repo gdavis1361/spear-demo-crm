@@ -31,6 +31,13 @@ export interface ApiError {
   readonly docsUrl?: string;
   readonly param?: string;
   readonly cause?: unknown;
+  /**
+   * Server-advised minimum delay before retry, in ms (VX3). Populated
+   * from a `Retry-After` response header — the outbox honors this when
+   * scheduling the next attempt. Only meaningful for retryable codes
+   * (`rate_limited`, `internal_error`); ignored for 4xx.
+   */
+  readonly retryAfterMs?: number;
 }
 
 export class ApiErrorException extends Error {
