@@ -252,6 +252,7 @@ export async function run(
     typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
+  const stream = workflowRunStream(def.id, ctx.runId);
   const result = (await startSpan(
     {
       name: `workflow.run.${def.id}`,
@@ -262,17 +263,21 @@ export async function run(
         'workflow.run_id': ctx.runId,
       },
     },
-    async () => {
-      const r = await executeRun(def, ctx);
-      const stream = workflowRunStream(def.id, ctx.runId);
-      // opKey is deterministic per (runId, eventIdx) — re-running this
-      // function with the same runId is an idempotent storage operation.
-      await log.append(
-        stream,
-        r.events.map((payload, idx) => ({ opKey: `${ctx.runId}:${idx}`, payload }))
-      );
-      return r;
-    }
+    // T1 + T7: re-entrant run with race-safe first-append gate.
+    //
+    // Every invocation reads the stream first so it can distinguish
+    // three states: (a) empty → fresh start, gated via `appendIf(empty)`
+    // so two concurrent starters for the same runId can't both commit
+    // `run_started`; (b) has `run_started`, tail is an un-resumed
+    // `wait_armed` → resume path (timer elapsed → emit `wait_resumed`
+    // + remaining steps, else return current waiting state); (c) has
+    // `run_completed` → read-only replay.
+    //
+    // Resuming appends new events with `opKey: ${runId}:${offset + idx}`
+    // where offset = existing.length. Storage idempotency on
+    // (stream, opKey) means an accidental double-resume collides
+    // harmlessly instead of writing dup events with shifted indices.
+    async () => runReentrant(def, ctx, log, stream)
   )) as RunResult;
   const t1 =
     typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -348,37 +353,168 @@ async function dispatchActivityWithRetry(
   return { code: lastCode, message: lastMessage };
 }
 
-// Core executor — shared trace-building logic with async activity dispatch
-// + throw-to-step_failed mapping. Kept internal so `run()` stays the only
-// public entry point that writes to the log.
-async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<RunResult> {
+// ─── re-entrant orchestration (T1 + T7) ────────────────────────────────────
+//
+// `run()` delegates here so the startSpan wrapper stays thin. This layer
+// inspects the existing stream, decides fresh-start vs resume vs
+// already-terminal, and is the single writer of new events.
+
+async function runReentrant(
+  def: WorkflowDefinition,
+  ctx: RunContext,
+  log: EventLog,
+  stream: ReturnType<typeof workflowRunStream>
+): Promise<RunResult> {
+  const existing = await log.read(stream);
+  const runEvents = existing
+    .map((e) => e.payload)
+    .filter((p) => p.kind.startsWith('workflow.')) as WorkflowRunEvent[];
+
+  // (c) Already terminal → read-only replay.
+  if (runEvents.some((e) => e.kind === 'workflow.run_completed')) {
+    return replay(def, existing) ?? synthesizeFallback(def, ctx);
+  }
+
+  // (b) Has `run_started`? If so, the only legitimate paused state is a
+  // tail `wait_armed` without a matching `wait_resumed`. Any other mid-
+  // state is a runner/crash artifact — we replay what we have and stop.
+  if (runEvents.some((e) => e.kind === 'workflow.run_started')) {
+    const armed = runEvents.filter((e) => e.kind === 'workflow.wait_armed');
+    const lastArmed = armed[armed.length - 1];
+    if (!lastArmed || lastArmed.kind !== 'workflow.wait_armed') {
+      return replay(def, existing) ?? synthesizeFallback(def, ctx);
+    }
+    const resumedIdxs = new Set(
+      runEvents
+        .filter((e) => e.kind === 'workflow.wait_resumed')
+        .map((e) => (e.kind === 'workflow.wait_resumed' ? e.stepIdx : -1))
+    );
+    if (resumedIdxs.has(lastArmed.stepIdx)) {
+      // Paused at a later point? Re-run from lastArmed.stepIdx+1.
+      // Uncommon: happens if a prior resume was interrupted after
+      // writing wait_resumed but before writing subsequent events.
+      return await continueFrom(def, ctx, log, stream, existing, lastArmed.stepIdx + 1, null);
+    }
+
+    // Tail wait_armed unresumed. Fire only if the timer has elapsed.
+    const now = new Date((ctx.now ?? nowInstant)().iso).getTime();
+    const fireAtMs = new Date(lastArmed.fireAt.iso).getTime();
+    if (now < fireAtMs) {
+      // Still waiting — return current state, write nothing.
+      return replay(def, existing) ?? synthesizeFallback(def, ctx);
+    }
+
+    return await continueFrom(
+      def,
+      ctx,
+      log,
+      stream,
+      existing,
+      lastArmed.stepIdx + 1,
+      lastArmed.stepIdx
+    );
+  }
+
+  // (a) Fresh start — gate the first write on "stream is empty". Losing
+  // the race means another starter committed first; fall through to a
+  // read-and-replay path so the caller gets the winner's result shape.
+  const planned = await planSteps(def, ctx, 0, { emitStarted: true, resumedFromIdx: null });
+  const inputs = planned.events.map((payload, i) => ({
+    opKey: `${ctx.runId}:${i}`,
+    payload,
+  }));
+  const res = await log.appendIf(stream, inputs, (prev) => prev.length === 0);
+  if (!res.ok && res.code === 'optimistic_lock_failure') {
+    const winner = await log.read(stream);
+    return replay(def, winner) ?? synthesizeFallback(def, ctx);
+  }
+  if (!res.ok) {
+    // Storage/validation error — surface as synthetic failure. Telemetry
+    // in the outer `run()` still fires so operators see the anomaly.
+    return synthesizeFallback(def, ctx);
+  }
+  const after = await log.read(stream);
+  return replay(def, after) ?? synthesizeFallback(def, ctx);
+}
+
+async function continueFrom(
+  def: WorkflowDefinition,
+  ctx: RunContext,
+  log: EventLog,
+  stream: ReturnType<typeof workflowRunStream>,
+  existing: readonly StoredEvent[],
+  startAt: number,
+  resumedFromIdx: number | null
+): Promise<RunResult> {
+  const planned = await planSteps(def, ctx, startAt, {
+    emitStarted: false,
+    resumedFromIdx,
+  });
+  if (planned.events.length === 0) {
+    return replay(def, existing) ?? synthesizeFallback(def, ctx);
+  }
+  const offset = existing.length;
+  const inputs = planned.events.map((payload, i) => ({
+    opKey: `${ctx.runId}:${offset + i}`,
+    payload,
+  }));
+  await log.append(stream, inputs);
+  const after = await log.read(stream);
+  return replay(def, after) ?? synthesizeFallback(def, ctx);
+}
+
+// Fallback when an unexpected append error prevents a normal replay. The
+// run doesn't advance; the caller gets a shape-correct result so
+// telemetry + callers don't crash.
+function synthesizeFallback(def: WorkflowDefinition, ctx: RunContext): RunResult {
+  return {
+    runId: ctx.runId,
+    workflowId: def.id,
+    version: def.version,
+    disposition: 'failed',
+    steps: [],
+    totalMs: 0,
+    events: [],
+  };
+}
+
+// Plan the new events to append from `startAt` forward. Pure with respect
+// to storage — returns the event sequence the caller then writes. Emits
+// `run_started` only if `emitStarted` (fresh-start path); emits
+// `wait_resumed` at the head if `resumedFromIdx` is set (resume path).
+async function planSteps(
+  def: WorkflowDefinition,
+  ctx: RunContext,
+  startAt: number,
+  opts: { emitStarted: boolean; resumedFromIdx: number | null }
+): Promise<{ events: WorkflowRunEvent[] }> {
   const nowFn = ctx.now ?? nowInstant;
-  const events: WorkflowRunEvent[] = [
-    {
+  const events: WorkflowRunEvent[] = [];
+  if (opts.emitStarted) {
+    events.push({
       kind: 'workflow.run_started',
       at: nowFn(),
       version: def.version,
       trigger: (def.steps[0] as { source?: string }).source ?? 'manual',
-    },
-  ];
-  const steps: RunStepTrace[] = [];
-  let disposition: RunResult['disposition'] = 'dropped';
-  let waitingAtStep: number | null = null;
-  let failed = false;
+    });
+  }
+  if (opts.resumedFromIdx !== null) {
+    events.push({
+      kind: 'workflow.wait_resumed',
+      at: nowFn(),
+      stepIdx: opts.resumedFromIdx,
+      cause: 'timer',
+    });
+  }
 
-  for (let i = 0; i < def.steps.length; i++) {
+  let disposition: Disposition = 'dropped';
+  let failed = false;
+  let waited = false;
+  let terminated = false;
+
+  stepLoop: for (let i = startAt; i < def.steps.length; i++) {
     const step = def.steps[i];
 
-    // Activity dispatch (T3): only `action` steps whose verb is registered
-    // run a real function. Unregistered verbs fall through as no-ops so a
-    // partially-wired activity table doesn't break untested workflows.
-    //
-    // Retries are bounded by `def.retry.maxAttempts`. Thrown errors whose
-    // `.code` is in `def.retry.nonRetryable` promote to `step_failed` on
-    // first throw — matches the schedule registry's retry discipline.
-    // Per-step opKey is `${runId}:step:${idx}` — the same idempotency
-    // key every retry attempt sees, so an activity that enqueues an
-    // outbox mutation (say) can't double-write across retries.
     if (step.kind === 'action') {
       const activity = ctx.activities?.[step.verb];
       if (activity) {
@@ -392,35 +528,32 @@ async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<Run
             code: failure.code,
             message: failure.message,
           });
-          steps.push({
-            idx: i,
-            kind: step.kind,
-            outcome: 'failed',
-            label: step.label,
-            ms: 0,
-            error: failure.message,
-          });
           failed = true;
-          break;
+          break stepLoop;
         }
       }
     }
 
-    const outcome = executeStep(step, ctx);
-    const at = nowFn();
-    if (outcome === 'wait') {
+    if (step.kind === 'wait') {
+      const at = nowFn();
+      const fireAt: Instant = {
+        iso: new Date(new Date(at.iso).getTime() + step.durationMs).toISOString(),
+      };
       events.push({
-        kind: 'workflow.step_executed',
+        kind: 'workflow.wait_armed',
         at,
         stepIdx: i,
-        stepKind: step.kind,
-        outcome: 'skip',
-        ms: 0,
+        fireAt,
+        // Copy into a mutable array — the event-log's validated shape is
+        // `string[]`, and `step.resumeOn` is `readonly string[]`.
+        resumeOn: step.resumeOn ? [...step.resumeOn] : [],
       });
-      steps.push({ idx: i, kind: step.kind, outcome: 'wait', label: step.label, ms: 0 });
-      waitingAtStep = i;
-      break;
+      waited = true;
+      break stepLoop;
     }
+
+    const outcome = executeStep(step, ctx);
+    const at = nowFn();
     events.push({
       kind: 'workflow.step_executed',
       at,
@@ -429,32 +562,28 @@ async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<Run
       outcome: outcome === 'ok' ? 'ok' : 'skip',
       ms: 0,
     });
-    steps.push({ idx: i, kind: step.kind, outcome, label: step.label, ms: 0 });
     if (outcome === 'skip') {
       disposition = 'dropped';
-      break;
+      terminated = true;
+      break stepLoop;
     }
     if (step.kind === 'end') {
       disposition = step.disposition;
+      terminated = true;
+      break stepLoop;
     }
   }
 
   if (failed) {
-    disposition = 'failed';
     events.push({ kind: 'workflow.run_completed', at: nowFn(), disposition: 'failed' });
-  } else if (waitingAtStep === null) {
+  } else if (terminated) {
     events.push({ kind: 'workflow.run_completed', at: nowFn(), disposition });
   }
-
-  return {
-    runId: ctx.runId,
-    workflowId: def.id,
-    version: def.version,
-    disposition: waitingAtStep !== null ? 'waiting' : disposition,
-    steps,
-    totalMs: 0,
-    events,
-  };
+  // waited && !terminated && !failed → no run_completed event; the
+  // tail wait_armed is the marker that a later resume will continue
+  // from.
+  void waited;
+  return { events };
 }
 
 // ─── replay ────────────────────────────────────────────────────────────────
@@ -475,14 +604,23 @@ export function replay(def: WorkflowDefinition, events: readonly StoredEvent[]):
   const completed = runEvents.find((e) => e.kind === 'workflow.run_completed');
   if (!started || started.kind !== 'workflow.run_started') return null;
 
+  // Build a quick lookup so wait_armed can know whether its twin
+  // wait_resumed exists elsewhere in the stream.
+  const resumedStepIdxs = new Set<number>(
+    runEvents
+      .filter((e) => e.kind === 'workflow.wait_resumed')
+      .map((e) => (e.kind === 'workflow.wait_resumed' ? e.stepIdx : -1))
+  );
+
   const steps: RunStepTrace[] = [];
   for (const e of runEvents) {
     if (e.kind === 'workflow.step_executed') {
       const defStep = def.steps[e.stepIdx];
       const label = defStep?.label ?? '(unknown)';
-      // A `wait` step records as `step_executed` with outcome 'skip'; reconstruct
-      // its trace outcome by checking the def. This keeps the event log honest:
-      // we don't fabricate a 'wait' outcome that wasn't on the wire.
+      // Legacy: pre-T1 runs wrote wait-steps as `step_executed` with
+      // outcome 'skip'. Post-T1 runs write `wait_armed` instead (handled
+      // below). Keep this branch so old streams still reconstruct
+      // correctly.
       const isWait = defStep?.kind === 'wait';
       steps.push({
         idx: e.stepIdx,
@@ -502,19 +640,40 @@ export function replay(def: WorkflowDefinition, events: readonly StoredEvent[]):
         ms: 0,
         error: e.message,
       });
+    } else if (e.kind === 'workflow.wait_armed') {
+      const defStep = def.steps[e.stepIdx];
+      // An armed wait with a matching wait_resumed later in the stream
+      // materialises as an 'ok' trace — the wait step ran to completion.
+      // Without a resume, it stays 'wait' and the run disposition is
+      // 'waiting' below.
+      steps.push({
+        idx: e.stepIdx,
+        kind: (defStep?.kind ?? 'wait') as WorkflowStep['kind'],
+        outcome: resumedStepIdxs.has(e.stepIdx) ? 'ok' : 'wait',
+        label: defStep?.label ?? '(unknown)',
+        ms: 0,
+      });
     }
+    // `workflow.wait_resumed` has no direct trace entry — its effect is
+    // folded into the corresponding `wait_armed` above.
   }
 
   // Parse runId from the stream key: "workflow:<wfId>:run:<runId>"
   const streamParts = (events[0]?.stream as string | undefined)?.split(':') ?? [];
   const runId = streamParts[3] ?? 'unknown';
 
-  // The absence of `workflow.run_completed` plus a tail `wait` step → still waiting.
+  // A stream with an un-resumed wait_armed OR a tail 'wait' trace (legacy
+  // step_executed-as-wait) counts as waiting if no run_completed is on
+  // the wire. The two checks are belt + suspenders: new runs use
+  // wait_armed; old runs live on step_executed.
+  const hasUnresumedWait = runEvents.some(
+    (e) => e.kind === 'workflow.wait_armed' && !resumedStepIdxs.has(e.stepIdx)
+  );
   const tailIsWait = steps[steps.length - 1]?.outcome === 'wait';
   const disposition: RunResult['disposition'] =
     completed && completed.kind === 'workflow.run_completed'
       ? (completed.disposition as Disposition)
-      : tailIsWait
+      : hasUnresumedWait || tailIsWait
         ? 'waiting'
         : finalDisposition(def);
 

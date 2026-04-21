@@ -249,6 +249,24 @@ const WorkflowRunCompleted = z.object({
   at: Instant,
   disposition: z.string(),
 });
+// T1: a wait step "arms" with a durable record of when it should fire +
+// what signals may resume it early. The matching `wait_resumed` event is
+// written by the ticker (or a signal-arrival path, future) when the wait
+// ends. Absence of `wait_resumed` on a stream whose tail is `wait_armed`
+// is what `replay()` uses to call the run `waiting`.
+const WorkflowWaitArmed = z.object({
+  kind: z.literal('workflow.wait_armed'),
+  at: Instant,
+  stepIdx: z.number().int().nonnegative(),
+  fireAt: Instant,
+  resumeOn: z.array(z.string()),
+});
+const WorkflowWaitResumed = z.object({
+  kind: z.literal('workflow.wait_resumed'),
+  at: Instant,
+  stepIdx: z.number().int().nonnegative(),
+  cause: z.enum(['timer', 'signal']),
+});
 const WorkflowRunCompensated = z.object({
   kind: z.literal('workflow.run_compensated'),
   at: Instant,
@@ -291,6 +309,8 @@ const Payload = z.discriminatedUnion('kind', [
   WorkflowStepFailed,
   WorkflowRunCompleted,
   WorkflowRunCompensated,
+  WorkflowWaitArmed,
+  WorkflowWaitResumed,
   SignalDismissed,
   SignalDismissReverted,
   SignalActioned,

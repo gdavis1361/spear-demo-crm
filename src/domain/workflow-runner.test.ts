@@ -310,3 +310,140 @@ describe('run() activity retries (T3)', () => {
     );
   });
 });
+
+// T1 — wait persistence + resume lifecycle. A wait step writes
+// `wait_armed { fireAt, resumeOn }` and the runner stops. Invoking
+// `run()` again with the same runId before `fireAt` returns the waiting
+// state unchanged; after `fireAt` the runner emits `wait_resumed` and
+// executes the remaining steps through to `run_completed`. Replay must
+// reconstruct the same disposition at every phase.
+describe('run() wait persistence (T1)', () => {
+  const def: WorkflowDefinition = {
+    id: 'wf-waiter',
+    name: 't',
+    version: 1,
+    description: '',
+    retry: DEFAULT_RETRY,
+    steps: [
+      { kind: 'trigger', source: 'manual', label: 'go' },
+      { kind: 'wait', label: 'wait 1m', durationMs: 60_000, resumeOn: ['inbound.reply'] },
+      { kind: 'end', label: 'done', disposition: 'queued' },
+    ],
+  };
+
+  it('first call emits wait_armed and returns waiting; no run_completed', async () => {
+    const log = new InMemoryEventLog();
+    _setNowForTests(() => instant('2026-04-21T12:00:00Z'));
+    try {
+      const r = await run(def, { input: {}, runId: 'r_wait_1' }, log);
+      expect(r.disposition).toBe('waiting');
+      const kinds = r.events.map((e) => e.kind);
+      expect(kinds).toEqual([
+        'workflow.run_started',
+        'workflow.step_executed',
+        'workflow.wait_armed',
+      ]);
+      const armed = r.events.find((e) => e.kind === 'workflow.wait_armed');
+      expect(armed && armed.kind === 'workflow.wait_armed' && armed.resumeOn).toEqual([
+        'inbound.reply',
+      ]);
+    } finally {
+      _resetNowForTests();
+    }
+  });
+
+  it('re-entering before fireAt returns current waiting state and writes nothing', async () => {
+    const log = new InMemoryEventLog();
+    _setNowForTests(() => instant('2026-04-21T12:00:00Z'));
+    await run(def, { input: {}, runId: 'r_wait_2' }, log);
+    const sizeAfterFirst = (await log.read(workflowRunStream(def.id, 'r_wait_2'))).length;
+    // Advance only 30s — wait is 60s so timer hasn't fired.
+    _setNowForTests(() => instant('2026-04-21T12:00:30Z'));
+    const again = await run(def, { input: {}, runId: 'r_wait_2' }, log);
+    expect(again.disposition).toBe('waiting');
+    expect((await log.read(workflowRunStream(def.id, 'r_wait_2'))).length).toBe(sizeAfterFirst);
+    _resetNowForTests();
+  });
+
+  it('re-entering after fireAt resumes and completes the run', async () => {
+    const log = new InMemoryEventLog();
+    _setNowForTests(() => instant('2026-04-21T12:00:00Z'));
+    await run(def, { input: {}, runId: 'r_wait_3' }, log);
+    // Advance past the 60s wait.
+    _setNowForTests(() => instant('2026-04-21T12:02:00Z'));
+    const resumed = await run(def, { input: {}, runId: 'r_wait_3' }, log);
+    expect(resumed.disposition).toBe('queued');
+    const stored = await log.read(workflowRunStream(def.id, 'r_wait_3'));
+    const kinds = stored.map((s) => s.payload.kind);
+    // Expected sequence: start → trigger step_exec → wait_armed →
+    // wait_resumed → end step_exec → run_completed.
+    expect(kinds).toEqual([
+      'workflow.run_started',
+      'workflow.step_executed',
+      'workflow.wait_armed',
+      'workflow.wait_resumed',
+      'workflow.step_executed',
+      'workflow.run_completed',
+    ]);
+    _resetNowForTests();
+  });
+
+  it('replay of a mid-resume stream reports waiting; of a post-resume stream reports queued', async () => {
+    const log = new InMemoryEventLog();
+    _setNowForTests(() => instant('2026-04-21T12:00:00Z'));
+    await run(def, { input: {}, runId: 'r_wait_4' }, log);
+    const paused = await log.read(workflowRunStream(def.id, 'r_wait_4'));
+    expect(replay(def, paused)?.disposition).toBe('waiting');
+    _setNowForTests(() => instant('2026-04-21T12:05:00Z'));
+    await run(def, { input: {}, runId: 'r_wait_4' }, log);
+    const finished = await log.read(workflowRunStream(def.id, 'r_wait_4'));
+    expect(replay(def, finished)?.disposition).toBe('queued');
+    _resetNowForTests();
+  });
+});
+
+// T7 — race-safe first-append. Two concurrent run() invocations against
+// the same runId must not both commit `workflow.run_started`. The first
+// wins via `appendIf(existing.length === 0)`; the loser reads the
+// winner's events and returns a consistent replayed view.
+describe('run() race-safe first-append (T7)', () => {
+  beforeEach(() => _setNowForTests(() => instant(NOW)));
+  afterEach(() => _resetNowForTests());
+
+  const def: WorkflowDefinition = {
+    id: 'wf-race',
+    name: 't',
+    version: 1,
+    description: '',
+    retry: DEFAULT_RETRY,
+    steps: [
+      { kind: 'trigger', source: 'manual', label: 'go' },
+      { kind: 'end', label: 'done', disposition: 'queued' },
+    ],
+  };
+
+  it('two concurrent starts to same runId result in exactly one run_started', async () => {
+    const log = new InMemoryEventLog();
+    const [a, b] = await Promise.all([
+      run(def, { input: {}, runId: 'r_race' }, log),
+      run(def, { input: {}, runId: 'r_race' }, log),
+    ]);
+    expect(a.disposition).toBe('queued');
+    expect(b.disposition).toBe('queued');
+    const stored = await log.read(workflowRunStream(def.id, 'r_race'));
+    const started = stored.filter((e) => e.payload.kind === 'workflow.run_started');
+    expect(started).toHaveLength(1); // first-append gate held
+    const completed = stored.filter((e) => e.payload.kind === 'workflow.run_completed');
+    expect(completed).toHaveLength(1);
+  });
+
+  it('invoking a completed run returns the replayed result unchanged', async () => {
+    const log = new InMemoryEventLog();
+    await run(def, { input: {}, runId: 'r_done' }, log);
+    const before = (await log.read(workflowRunStream(def.id, 'r_done'))).length;
+    const again = await run(def, { input: {}, runId: 'r_done' }, log);
+    expect(again.disposition).toBe('queued');
+    // Re-invocation of a terminal run writes no new events.
+    expect((await log.read(workflowRunStream(def.id, 'r_done'))).length).toBe(before);
+  });
+});

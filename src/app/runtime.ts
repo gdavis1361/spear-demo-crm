@@ -145,6 +145,10 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   installPromiseTicker(promiseStore);
   registerSchedules();
   installOutboxDrainTriggers();
+  // T1: wait-step resume ticker. Scans `workflow:*` for armed waits
+  // whose fireAt has elapsed, re-enters run() for each. Cheap; idle
+  // tabs with no waiting runs do zero work beyond the interval scan.
+  installArmedWaitTicker();
 
   // Publish outbox depth into the ambient module so every telemetry
   // envelope can carry `outboxDepth` via `baseContext()` (H2). Inverted
@@ -440,5 +444,119 @@ export function startDemoWorkflowRunner(): () => void {
     }
   };
 }
+
+// ─── Armed-wait ticker (T1) ────────────────────────────────────────────────
+//
+// Scans `workflow:*` streams for `wait_armed` events without a matching
+// `wait_resumed`, finds those whose `fireAt` has elapsed, and re-invokes
+// `run()` with the same runId. The runner's re-entrant path (C3) does
+// the rest: reads the existing stream, emits `wait_resumed`, and
+// executes remaining steps through to `run_completed`.
+//
+// Invariant: the ticker never creates a new runId. It only re-enters
+// existing ones. The idempotency-on-opKey contract means a ticker
+// firing twice in the same cycle is safe — the second re-entry reads
+// the just-completed stream and short-circuits to the replayed view.
+
+let waitTickerTimer: ReturnType<typeof setInterval> | null = null;
+
+const WAIT_TICKER_INTERVAL_MS = 5_000; // 5s is tight enough for demo
+// wait durations (60s+), loose
+// enough to stay out of the
+// way on idle tabs.
+
+interface ArmedWaitCandidate {
+  readonly workflowId: string;
+  readonly runId: string;
+  readonly stepIdx: number;
+  readonly fireAtMs: number;
+}
+
+function scanArmedWaits(
+  rows: readonly { stream: string; payload: unknown }[]
+): ArmedWaitCandidate[] {
+  // Group by stream, check whether each stream's last wait_armed has a
+  // matching wait_resumed. If not, record as a candidate.
+  const byStream = new Map<string, { stream: string; payload: unknown }[]>();
+  for (const r of rows) {
+    const arr = byStream.get(r.stream) ?? [];
+    arr.push(r);
+    byStream.set(r.stream, arr);
+  }
+  const out: ArmedWaitCandidate[] = [];
+  for (const [streamKey, events] of byStream) {
+    let lastArmed: { stepIdx: number; fireAtMs: number } | null = null;
+    let resumedSet: Set<number> | null = null;
+    let completed = false;
+    for (const e of events) {
+      const p = e.payload as { kind?: string; stepIdx?: number; fireAt?: { iso?: string } };
+      if (p.kind === 'workflow.run_completed') completed = true;
+      if (p.kind === 'workflow.wait_armed') {
+        const fireAtMs = p.fireAt?.iso ? Date.parse(p.fireAt.iso) : NaN;
+        if (Number.isFinite(fireAtMs)) lastArmed = { stepIdx: p.stepIdx ?? -1, fireAtMs };
+      }
+      if (p.kind === 'workflow.wait_resumed') {
+        resumedSet = resumedSet ?? new Set();
+        if (typeof p.stepIdx === 'number') resumedSet.add(p.stepIdx);
+      }
+    }
+    if (completed || !lastArmed) continue;
+    if (resumedSet?.has(lastArmed.stepIdx)) continue;
+    // Stream key: "workflow:<wfId>:run:<runId>" — split on ':'.
+    const parts = streamKey.split(':');
+    if (parts.length < 4) continue;
+    const workflowId = parts[1];
+    const runId = parts[3];
+    out.push({
+      workflowId,
+      runId,
+      stepIdx: lastArmed.stepIdx,
+      fireAtMs: lastArmed.fireAtMs,
+    });
+  }
+  return out;
+}
+
+async function tickArmedWaits(): Promise<void> {
+  const now = Date.now();
+  const rows = await eventLog.readPrefix('workflow:');
+  const candidates = scanArmedWaits(rows as { stream: string; payload: unknown }[]);
+  for (const c of candidates) {
+    if (c.fireAtMs > now) continue;
+    const wf = WORKFLOWS.find((w) => w.id === c.workflowId);
+    if (!wf) continue;
+    // Re-enter the runner. The input is not known here (it lives in the
+    // trigger event that started the run), so pass an empty one —
+    // post-wait steps in our current definitions don't consult input.
+    // Real deployments should either persist input on run_started or
+    // store it in a sibling stream for resume.
+    const result = await runWorkflow(
+      wf,
+      { input: {}, runId: c.runId, activities: DEFAULT_ACTIVITIES },
+      eventLog
+    );
+    runHistory.push(result);
+  }
+}
+
+/**
+ * Install the armed-wait ticker. Idempotent. Visible for tests so they
+ * can assert the scanner shape without waiting for `setInterval`.
+ */
+export function installArmedWaitTicker(): () => void {
+  if (waitTickerTimer || typeof window === 'undefined') return () => undefined;
+  waitTickerTimer = setInterval(() => {
+    void tickArmedWaits();
+  }, WAIT_TICKER_INTERVAL_MS);
+  return () => {
+    if (waitTickerTimer) {
+      clearInterval(waitTickerTimer);
+      waitTickerTimer = null;
+    }
+  };
+}
+
+// Test-only export so tests can run the scanner without the timer.
+export { scanArmedWaits, tickArmedWaits };
 
 export { WORKFLOWS };

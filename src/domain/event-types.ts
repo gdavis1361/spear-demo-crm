@@ -89,7 +89,27 @@ export type WorkflowRunEvent =
       message: string;
     }
   | { kind: 'workflow.run_completed'; at: Instant; disposition: string }
-  | { kind: 'workflow.run_compensated'; at: Instant; compensated: number; reason: string };
+  | { kind: 'workflow.run_compensated'; at: Instant; compensated: number; reason: string }
+  // T1: wait step lifecycle. `wait_armed` records the fireAt + resumeOn
+  // contract the runner is honoring; `wait_resumed` is written by the
+  // armed-wait ticker (or, eventually, a signal-arrival path) when the
+  // wait ends, so replay can reconstruct the transition.
+  | {
+      kind: 'workflow.wait_armed';
+      at: Instant;
+      stepIdx: number;
+      fireAt: Instant;
+      // Not readonly: the Zod schema infers `string[]` and the event log
+      // types must match the validated shape exactly or the event-log
+      // append/read round-trip fails to narrow.
+      resumeOn: string[];
+    }
+  | {
+      kind: 'workflow.wait_resumed';
+      at: Instant;
+      stepIdx: number;
+      cause: 'timer' | 'signal';
+    };
 
 // Legacy union — the in-storage envelope no longer carries `stream` on the
 // payload (it lives on the envelope), but some call sites still want this
