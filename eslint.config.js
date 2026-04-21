@@ -77,6 +77,46 @@ export default tseslint.config(
       '@eslint-community/eslint-comments/no-unused-disable': 'warn',
     },
   },
+  // TB1 — ontology marking guardrail (lint-rule half).
+  //
+  // The full fix (advisor: "multi-day") is to thread MarkingContext
+  // through every projection → screen read, with a compile-time brand
+  // on PII-bearing fields. This commit ships the cheap defense: screens
+  // and components MUST NOT import raw event-kind types
+  // (AccountEvent, DealEvent, PromiseEvent, SignalEvent) directly.
+  // The only legal path from durable event to UI is via a projection
+  // (DealProjection, SignalProjection, PromiseStore), which is the
+  // layer that will thread marking once the architectural half lands.
+  //
+  // Today no screen imports these types — the rule locks in that
+  // invariant. A PR that adds a direct import from the UI layer fails
+  // linting with a pointer to the projection pattern and the TB1
+  // architectural plan.
+  //
+  // Why a lint rule and not a @typescript-eslint type-level check:
+  // TS-aware rules (no-unsafe-member-access, no-restricted-types)
+  // require the typed parser, which is slow and we deliberately run
+  // without it for CI speed. The import-name restriction catches the
+  // 95% case — if the type never crosses the boundary, direct
+  // property access on a value of that type can't happen either.
+  {
+    files: ['src/screens/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'warn',
+        {
+          patterns: [
+            {
+              group: ['**/domain/events', '**/domain/event-types'],
+              importNames: ['AccountEvent', 'DealEvent', 'PromiseEvent', 'SignalEvent'],
+              message:
+                'UI code must render through a projection (DealProjection / SignalProjection / PromiseStore), not raw event types. Direct imports bypass the marking layer planned in TB1.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // T10 — clock-access guard in the workflow runtime.
   //
   // Temporal's core determinism contract: replay(history) must produce
