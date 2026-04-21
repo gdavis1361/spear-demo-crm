@@ -6,6 +6,9 @@ test.describe('Spear CRM — smoke', () => {
     // Clear persisted state so each test starts fresh
     await page.evaluate(() => localStorage.clear());
     await page.reload();
+    // Wait for the app's first render so window keydown listeners are installed
+    // before any test fires keyboard events.
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   });
 
   test('landing loads the Today screen', async ({ page }) => {
@@ -16,7 +19,9 @@ test.describe('Spear CRM — smoke', () => {
   test('Rail keyboard nav: g then p lands on Pipeline', async ({ page }) => {
     await page.keyboard.press('g');
     await page.keyboard.press('p');
-    await expect(page.getByRole('heading', { level: 1 })).toContainText(/pipeline/i);
+    // Pipeline screen has no h1 by design (table/kanban is the "heading"),
+    // so assert the app's data-screen-label instead.
+    await expect(page.locator('.app')).toHaveAttribute('data-screen-label', '02 Pipeline');
   });
 
   test('Rail click nav: Signals', async ({ page }) => {
