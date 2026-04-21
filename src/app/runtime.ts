@@ -8,6 +8,8 @@
 import { eventLog, reportStorageEstimate } from '../domain/events';
 import { PromiseStore, installPromiseTicker } from '../domain/promises';
 import { ScheduleRegistry } from '../domain/schedules';
+import { DealProjection } from '../domain/deal-projection';
+import { bootstrapDealsIfEmpty } from '../domain/deal-bootstrap';
 import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
@@ -16,6 +18,7 @@ import { runScenario, scenarioName } from '../seeds';
 
 export const promiseStore = new PromiseStore(eventLog);
 export const scheduleRegistry = new ScheduleRegistry(eventLog);
+export const dealProjection = new DealProjection(eventLog);
 export let vacuumRunner: VacuumRunner | null = null;
 
 // Recent workflow runs, kept in memory so the Workflows tab can render.
@@ -71,6 +74,13 @@ export async function bootRuntime(): Promise<void> {
   await runScenario(eventLog, { promiseStore }, scenarioName('canonical'), {
     runInvariants: false,
   });
+
+  // Deal event-sourcing bootstrap. Seeds the static DEALS fixture into
+  // the event log on first boot; no-op on subsequent boots. DealProjection
+  // hydrates from the log after this lands.
+  await bootstrapDealsIfEmpty(eventLog);
+  await dealProjection.rehydrate();
+
   installPromiseTicker(promiseStore);
   registerSchedules();
 

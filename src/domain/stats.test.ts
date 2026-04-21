@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getStorageStats, recordVacuumOutcome } from './stats';
-import { IndexedDbEventLog, dealStream, scheduleStream, openSpearDb, _resetDbConnectionForTests, STORE_PROMISES } from './events';
+import {
+  IndexedDbEventLog,
+  dealStream,
+  scheduleStream,
+  openSpearDb,
+  _resetDbConnectionForTests,
+  STORE_PROMISES,
+} from './events';
 import { instant } from '../lib/time';
 import { repId, leadId } from '../lib/ids';
 import { moneyFromMajor } from '../lib/money';
@@ -40,14 +47,29 @@ describe('getStorageStats', () => {
   });
 
   it('counts events per prefix', async () => {
-    await log.append(dealStream(ld), [{
-      opKey: ulid(),
-      payload: { kind: 'deal.created', at, by: me, stage: 'inbound', value: moneyFromMajor(1) },
-    }]);
-    await log.append(scheduleStream('s'), [{
-      opKey: ulid(),
-      payload: { kind: 'schedule.run_started', at, scheduledFor: at },
-    }]);
+    await log.append(dealStream(ld), [
+      {
+        opKey: ulid(),
+        payload: {
+          kind: 'deal.created',
+          at,
+          by: me,
+          stage: 'inbound',
+          value: moneyFromMajor(1),
+          displayId: 'LD-T',
+          title: 'T',
+          meta: '',
+          branch: 'T',
+          tags: [],
+        },
+      },
+    ]);
+    await log.append(scheduleStream('s'), [
+      {
+        opKey: ulid(),
+        payload: { kind: 'schedule.run_started', at, scheduledFor: at },
+      },
+    ]);
     const s = await getStorageStats(log);
     expect(s.events.total).toBe(2);
     expect(s.events.byPrefix['deal:']).toBe(1);

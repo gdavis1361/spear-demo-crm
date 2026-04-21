@@ -16,7 +16,7 @@
   {
     "name": "schemas chunk · Zod runtime, largest lazy chunk by gzip",
     "path": "dist/assets/schemas-*.js",
-    "limit": "22 KB",
+    "limit": "23 KB",
     "gzip": true,
     "brotli": false
   },
