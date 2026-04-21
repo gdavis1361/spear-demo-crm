@@ -10,6 +10,7 @@ import { isEnabled } from '../app/flags';
 import { canTransition, runTransition } from '../domain/deal-machine';
 import { eventLog } from '../domain/events';
 import { useDeals } from '../app/use-deals';
+import { useAnnounce } from '../lib/live-region';
 
 // Pipeline — 3 layouts: kanban / timeline / table
 
@@ -93,6 +94,7 @@ export function PipelineKanban() {
   // tab) flows through here automatically — no local "overlay" needed;
   // `runTransition` appends before the UI rerenders.
   const deals = useDeals();
+  const announce = useAnnounce();
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overStage, setOverStage] = React.useState<StageKey | null>(null);
 
@@ -101,6 +103,8 @@ export function PipelineKanban() {
       const prev = deals.find((d) => d.dealId === id);
       if (!prev || prev.stage === to) return;
       const from = prev.stage;
+      const fromLabel = STAGES.find((s) => s.k === from)?.label ?? from;
+      const toLabel = STAGES.find((s) => s.k === to)?.label ?? to;
 
       // Domain check: state machine rejects illegal edges before we hit the wire.
       if (!canTransition(from, to)) {
@@ -116,6 +120,7 @@ export function PipelineKanban() {
           },
         });
         console.warn(`[pipeline] illegal transition ${from} → ${to}; dropped client-side`);
+        announce(`Cannot move ${prev.title} from ${fromLabel} to ${toLabel}: invalid transition.`);
         return;
       }
 
@@ -154,6 +159,11 @@ export function PipelineKanban() {
       // Projection already has the new stage from the `deal.advanced` event;
       // the subscription in useDeals() re-renders this component.
       track({ name: 'pipeline.card_moved', props: { dealId: id, from, to, optimistic: true } });
+      // Announce the optimistic success now, not after the server confirms.
+      // Screen reader users expect feedback at the same latency sighted
+      // users get the visual update; if the server reverts, the rollback
+      // path below announces that separately.
+      announce(`Moved ${prev.title} from ${fromLabel} to ${toLabel}.`);
 
       const res = await advanceDeal(prev.dealId, to, opKey);
       const ms = Math.round(performance.now() - t0);
@@ -177,6 +187,7 @@ export function PipelineKanban() {
         console.warn(
           `[pipeline] move rolled back: ${res.error.code} — ${res.error.message} (req_id=${res.requestId})`
         );
+        announce(`Move failed. ${prev.title} returned to ${fromLabel}.`);
         return;
       }
       track({
@@ -184,7 +195,7 @@ export function PipelineKanban() {
         props: { dealId: id, from, to, ms, requestId: res.requestId },
       });
     },
-    [deals]
+    [deals, announce]
   );
 
   const onDragStart = (e: React.DragEvent, id: string) => {

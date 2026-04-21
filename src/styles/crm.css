@@ -542,6 +542,26 @@ button {
   overflow: auto;
   position: relative;
 }
+/*
+  `<main>` receives skip-link focus and owns scroll. `tabIndex={0}`
+  (applied in JSX) makes it keyboard-focusable — necessary for:
+    · WCAG 2.1.1 — users must be able to scroll a region with the
+      keyboard; axe's `scrollable-region-focusable` rule flags
+      scrollable elements that can't be focused.
+    · WCAG 2.4.1 — WebKit won't move focus to a `<main>` on skip-link
+      activation unless it's explicitly focusable.
+  Visual focus handling uses `:focus-visible` so programmatic focus
+  (the skip-link lands focus here non-interactively) and mouse clicks
+  don't show a ring, but a keyboard Tab does — satisfying WCAG 2.4.7
+  (Focus Visible) without a noisy ring during hash navigation.
+*/
+.main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.main:focus:not(:focus-visible) {
+  outline: none;
+}
 
 /* ============ Shared primitives ============ */
 .pane-head {

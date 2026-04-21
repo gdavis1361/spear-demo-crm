@@ -3,6 +3,7 @@ import { Topbar, Rail, Tweaks } from './components/shell';
 import { Peek, CommandBar, CommandPalette, FocusProvider } from './components/nouns';
 import { SeedBanner } from './components/seed-banner';
 import { DevPalette } from './components/dev-palette';
+import { LiveRegionProvider } from './lib/live-region';
 import { AppProvider } from './app/context';
 import { readJson, readString, writeJson, writeString } from './app/state';
 import { track } from './app/telemetry';
@@ -158,37 +159,70 @@ export function App() {
 
   return (
     <AppProvider screen={screen} setScreen={setScreenRaw} role={role} setRole={setRole}>
-      <FocusProvider>
-        <a href="#main" className="skip-link">
-          Skip to main content
-        </a>
-        <SeedBanner />
-        <DevPalette />
-        <div
-          className="app with-cmdbar"
-          data-density={t.density}
-          data-screen-label={SCREEN_LABEL[screen]}
-        >
-          <Topbar screen={screen} role={role} setRole={setRole} ground={t.ground} />
-          <Rail screen={screen} setScreen={setScreenRaw} onOpenTweaks={() => setTweaksOpen(true)} />
-          <main className="main" id="main">
-            <React.Suspense fallback={<ScreenSkeleton />}>
-              {screen === 'today' &&
-                (role === 'mgr' ? <ManagerToday /> : <Today sort={t.todaySort} />)}
-              {screen === 'pipeline' && <Pipeline layout={t.pipeLayout} />}
-              {screen === 'pond' && (role === 'mgr' ? <ManagerPond /> : <Pond />)}
-              {screen === 'signals' && <Signals />}
-              {screen === 'account' && <Account />}
-              {screen === 'quote' && <Quote />}
-              {screen === 'workflows' && <Workflows />}
-            </React.Suspense>
-          </main>
-          <Peek />
-          <CommandBar role={role} />
-          <CommandPalette role={role} />
-          <Tweaks open={tweaksOpen} state={t} set={setTweak} onClose={() => setTweaksOpen(false)} />
-        </div>
-      </FocusProvider>
+      <LiveRegionProvider>
+        <FocusProvider>
+          <a href="#main" className="skip-link">
+            Skip to main content
+          </a>
+          <SeedBanner />
+          <DevPalette />
+          <div
+            className="app with-cmdbar"
+            data-density={t.density}
+            data-screen-label={SCREEN_LABEL[screen]}
+          >
+            <Topbar screen={screen} role={role} setRole={setRole} ground={t.ground} />
+            <Rail
+              screen={screen}
+              setScreen={setScreenRaw}
+              onOpenTweaks={() => setTweaksOpen(true)}
+            />
+            {/*
+            `tabIndex={0}` satisfies two WCAG criteria at once:
+              - 2.4.1: skip-link hash-activation lands focus here (works
+                without tabindex on Chrome/Firefox but not on WebKit).
+              - 2.1.1: `.main` has `overflow: auto`; axe's
+                `scrollable-region-focusable` rule requires any
+                scrollable region to be keyboard-focusable so users on
+                screens with no interactive content (e.g. Pond) can
+                still scroll with PgDn/arrows.
+            Putting it on `<main>` directly keeps one tab stop for the
+            content region; an inner wrapper was tried but broke the
+            grid height cascade (visual regression) without gaining
+            anything semantic.
+          */}
+            {/*
+            <main> needs an explicit tabindex to satisfy WCAG 2.1.1
+            (scrollable-region-focusable) and 2.4.1 (skip-link target).
+            jsx-a11y's blanket ban on tabindex-on-landmarks is the wrong
+            default for scrollable main elements; see crm.css for the
+            focus-visible handling.
+          */}
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+            <main className="main" id="main" tabIndex={0}>
+              <React.Suspense fallback={<ScreenSkeleton />}>
+                {screen === 'today' &&
+                  (role === 'mgr' ? <ManagerToday /> : <Today sort={t.todaySort} />)}
+                {screen === 'pipeline' && <Pipeline layout={t.pipeLayout} />}
+                {screen === 'pond' && (role === 'mgr' ? <ManagerPond /> : <Pond />)}
+                {screen === 'signals' && <Signals />}
+                {screen === 'account' && <Account />}
+                {screen === 'quote' && <Quote />}
+                {screen === 'workflows' && <Workflows />}
+              </React.Suspense>
+            </main>
+            <Peek />
+            <CommandBar role={role} />
+            <CommandPalette role={role} />
+            <Tweaks
+              open={tweaksOpen}
+              state={t}
+              set={setTweak}
+              onClose={() => setTweaksOpen(false)}
+            />
+          </div>
+        </FocusProvider>
+      </LiveRegionProvider>
     </AppProvider>
   );
 }
