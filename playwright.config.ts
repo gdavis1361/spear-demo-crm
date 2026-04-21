@@ -29,6 +29,7 @@ export default defineConfig({
         'seed-activation.spec.ts',
         'seed-banner.spec.ts',
         'dev-palette.spec.ts',
+        'signals-interactions.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'] },
     },

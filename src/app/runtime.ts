@@ -9,16 +9,35 @@ import { eventLog, reportStorageEstimate } from '../domain/events';
 import { PromiseStore, installPromiseTicker } from '../domain/promises';
 import { ScheduleRegistry } from '../domain/schedules';
 import { DealProjection } from '../domain/deal-projection';
+import { SignalProjection } from '../domain/signal-projection';
 import { bootstrapDealsIfEmpty } from '../domain/deal-bootstrap';
 import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
 import { recordVacuumOutcome } from '../domain/stats';
+import { Outbox } from '../domain/outbox';
+import { buildDispatcherRegistry } from '../domain/outbox-dispatchers';
 import { runScenario, scenarioName, type ScenarioName } from '../seeds';
+import { drainPersistedTelemetry } from './telemetry';
 
 export const promiseStore = new PromiseStore(eventLog);
 export const scheduleRegistry = new ScheduleRegistry(eventLog);
 export const dealProjection = new DealProjection(eventLog);
+/**
+ * Signal dismiss/action state as a first-class durable projection (VX1).
+ * The Signals feed itself stays a static fixture; this projection folds
+ * user-mark events (`signal.dismissed` / `signal.actioned` + their
+ * reverts) on top so a dismissed signal stays hidden across navigation,
+ * reload, and the outbox's permanent-failure compensation.
+ */
+export const signalProjection = new SignalProjection(eventLog);
+/**
+ * Durable outbox: the only path from an optimistic UI write to the
+ * server. Components enqueue mutations against this singleton; the
+ * drainer (see bootRuntime below) owns retry + permanent-failure
+ * compensation. R1 of the Linear runtime audit.
+ */
+export const outbox = new Outbox(buildDispatcherRegistry(eventLog));
 export let vacuumRunner: VacuumRunner | null = null;
 
 // Recent workflow runs, kept in memory so the Workflows tab can render.
@@ -90,9 +109,11 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   // hydrates from the log after this lands.
   await bootstrapDealsIfEmpty(eventLog);
   await dealProjection.rehydrate();
+  await signalProjection.ready;
 
   installPromiseTicker(promiseStore);
   registerSchedules();
+  installOutboxDrainTriggers();
 
   // Vacuum runner pipes its outcome into stats so the debug pane has
   // "last vacuum" without coupling vacuum-runner to stats directly.
@@ -103,6 +124,21 @@ export async function bootRuntime(opts: BootOptions = {}): Promise<void> {
   // Fire-and-forget quota check. Emits `storage.quota_near` at ≥80% so
   // operators see pressure before a write hits `quota_exceeded`.
   void reportStorageEstimate();
+
+  // Boot-time drain: catch anything left over from the previous tab's
+  // crash/close. `await` is fine — outbox pre-flights `navigator.onLine`
+  // so it resolves quickly when offline. If the current tab is online but
+  // mutations fail, they stay durable and the periodic trigger tries
+  // again.
+  void outbox.drain();
+
+  // VX10: re-submit any telemetry batches a prior session persisted
+  // after a failed POST. Fire-and-forget — failures bump attemptCount
+  // durably without blocking boot.
+  void drainPersistedTelemetry();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => void drainPersistedTelemetry());
+  }
 }
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
@@ -149,6 +185,48 @@ function registerSchedules(): void {
     run: async (runId, _at) => {
       const items = Math.floor(Math.random() * 2);
       return { runId, items };
+    },
+  });
+}
+
+// ─── Outbox drainers ───────────────────────────────────────────────────────
+//
+// Four triggers, matching the "when is it worth trying again?" question:
+//   1. Boot            — catch mutations left over from a prior crash.
+//   2. `online`        — network came back; drain ASAP, don't wait for timer.
+//   3. `visibilitychange` to visible — tab came back to foreground; likely
+//      user about to interact, catch any pending state fast so the next UI
+//      re-render reflects truth.
+//   4. Periodic (30s)  — the catch-all for slow degradations; also what
+//      runs when a tab stays online and foregrounded for a long time.
+//
+// All four end up calling `outbox.drain()`, which holds a cross-tab lock
+// (via navigator.locks), so redundant triggers across tabs don't
+// double-send.
+
+let outboxTriggersInstalled = false;
+function installOutboxDrainTriggers(): void {
+  if (outboxTriggersInstalled || typeof window === 'undefined') return;
+  outboxTriggersInstalled = true;
+
+  window.addEventListener('online', () => void outbox.drain());
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void outbox.drain();
+  });
+
+  // Periodic sweep under the existing ScheduleRegistry so the outbox gets
+  // the same retry policy + jitter + telemetry discipline as the inbound
+  // polls. 30s cadence is tight enough that a user reopening a tab after
+  // a sync failure sees fresh state; loose enough that we don't burn
+  // quota on a healthy queue.
+  scheduleRegistry.register({
+    name: 'outbox.drain',
+    intervalMs: 30_000,
+    jitterMs: 3_000,
+    retry: { maxAttempts: 1, initialBackoffMs: 1000, backoffMultiplier: 2, nonRetryable: [] },
+    run: async (runId, _at) => {
+      const report = await outbox.drain();
+      return { runId, items: report.attempted };
     },
   });
 }

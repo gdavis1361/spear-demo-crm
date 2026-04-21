@@ -60,6 +60,16 @@ export type ScheduleEvent =
   | { kind: 'schedule.run_failed'; at: Instant; runId: string; code: string; message: string }
   | { kind: 'schedule.dead_lettered'; at: Instant; runId: string; attempts: number };
 
+// Signal events — mirror `event-schema.ts`. `signal.dismiss_reverted` +
+// `signal.action_reverted` exist solely so the outbox compensator has a
+// durable, projection-visible way to undo an optimistic mark when the
+// server permanently refuses. Same pattern as deal.reverted.
+export type SignalEvent =
+  | { kind: 'signal.dismissed'; at: Instant; by: RepId; reason?: string }
+  | { kind: 'signal.dismiss_reverted'; at: Instant; by: RepId; reason: string }
+  | { kind: 'signal.actioned'; at: Instant; by: RepId }
+  | { kind: 'signal.action_reverted'; at: Instant; by: RepId; reason: string };
+
 export type WorkflowRunEvent =
   | { kind: 'workflow.run_started'; at: Instant; version: number; trigger: string }
   | {
@@ -89,7 +99,8 @@ export type DomainEvent =
   | (AccountEvent & { stream: StreamKey })
   | (PromiseEvent & { stream: StreamKey })
   | (ScheduleEvent & { stream: StreamKey })
-  | (WorkflowRunEvent & { stream: StreamKey });
+  | (WorkflowRunEvent & { stream: StreamKey })
+  | (SignalEvent & { stream: StreamKey });
 
 export type EventName = (
   | DealEvent
@@ -97,4 +108,5 @@ export type EventName = (
   | PromiseEvent
   | ScheduleEvent
   | WorkflowRunEvent
+  | SignalEvent
 )['kind'];
