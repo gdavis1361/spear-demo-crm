@@ -27,6 +27,9 @@
     }
   },
   "forwardPorts": [5173],
-  "postCreateCommand": "npm ci && npx playwright install --with-deps chromium",
+  // Codespaces' typescript-node base image already ships the OS deps Playwright
+  // needs, and `--with-deps` would require root (this container runs as `node`).
+  // Install browsers only — runs as the unprivileged user without sudo.
+  "postCreateCommand": "npm ci && npx playwright install chromium firefox webkit",
   "remoteUser": "node"
 }

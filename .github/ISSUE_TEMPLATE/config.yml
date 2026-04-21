@@ -1,8 +1,9 @@
+# TODO(repo-url): swap OWNER/REPO for the real path once the repo is pushed.
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/spear/spear-demo-crm/security/advisories/new
+    url: https://github.com/OWNER/REPO/security/advisories/new
     about: Privately report a security issue. Do NOT use a public issue.
   - name: Discussions
-    url: https://github.com/spear/spear-demo-crm/discussions
+    url: https://github.com/OWNER/REPO/discussions
     about: Architecture questions, "show and tell", general Q&A.

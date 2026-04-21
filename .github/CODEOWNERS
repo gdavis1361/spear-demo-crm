@@ -1,40 +1,45 @@
 # CODEOWNERS — auto-requested reviewers per path.
 # Order matters: the LAST matching pattern wins.
-# Replace placeholders with real GitHub teams or handles.
+#
+# TODO(repo-org): replace `@OWNER/<team>` placeholders with real GitHub teams
+# once the repo is pushed and teams are created. Until then every line below
+# is commented out — *no* review is auto-requested. Once teams exist, uncomment
+# and ensure the Branch Protection rule on `main` has "Require review from
+# Code Owners" enabled.
 
 # Default reviewer for anything unowned
-*                                @spear/maintainers
+# *                                @OWNER/maintainers
 
 # Frontend surfaces
-/src/components/                 @spear/frontend
-/src/screens/                    @spear/frontend
-/src/styles/                     @spear/frontend
+# /src/components/                 @OWNER/frontend
+# /src/screens/                    @OWNER/frontend
+# /src/styles/                     @OWNER/frontend
 
 # Typed primitives + API boundary
-/src/lib/                        @spear/platform
-/src/api/                        @spear/platform
+# /src/lib/                        @OWNER/platform
+# /src/api/                        @OWNER/platform
 
 # Durable layer + ontology — extra eyes on these
-/src/domain/                     @spear/platform @spear/ontology
-/src/ontology/                   @spear/ontology
+# /src/domain/                     @OWNER/platform @OWNER/ontology
+# /src/ontology/                   @OWNER/ontology
 
 # App runtime + telemetry
-/src/app/                        @spear/platform
+# /src/app/                        @OWNER/platform
 
 # Tests
-/tests/                          @spear/qa
-/src/**/*.test.ts                @spear/qa
+# /tests/                          @OWNER/qa
+# /src/**/*.test.ts                @OWNER/qa
 
 # Build + repo plumbing
-/.github/                        @spear/devex
-/.devcontainer/                  @spear/devex
-/vite.config.ts                  @spear/devex
-/vitest.config.ts                @spear/devex @spear/qa
-/playwright.config.ts            @spear/devex @spear/qa
-/tsconfig*.json                  @spear/platform
-/package.json                    @spear/devex
-/package-lock.json               @spear/devex
+# /.github/                        @OWNER/devex
+# /.devcontainer/                  @OWNER/devex
+# /vite.config.ts                  @OWNER/devex
+# /vitest.config.ts                @OWNER/devex @OWNER/qa
+# /playwright.config.ts            @OWNER/devex @OWNER/qa
+# /tsconfig*.json                  @OWNER/platform
+# /package.json                    @OWNER/devex
+# /package-lock.json               @OWNER/devex
 
 # Security / ops
-/SECURITY.md                     @spear/security
-/.github/workflows/codeql.yml    @spear/security
+# /SECURITY.md                     @OWNER/security
+# /.github/workflows/codeql.yml    @OWNER/security

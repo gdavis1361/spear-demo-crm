@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/**'
       - 'README.md'
+      - 'mkdocs.yml'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -19,22 +20,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      # mkdocs-material renders Mermaid natively via pymdown-extensions.
+      - name: Install mkdocs-material
+        run: pip install mkdocs-material==9.5.42 pymdown-extensions==10.11
+      - name: Stage README as the landing page
+        run: cp README.md docs/index.md
+      - name: Build static site (--strict fails on broken links / unknown refs)
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
   deploy:
+    needs: build
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - name: Build static docs site
-        # Minimal: publish docs/ + README as-is. Swap for mkdocs / nextra later.
-        run: |
-          mkdir -p _site
-          cp README.md _site/index.md
-          cp -r docs/* _site/ || true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -1,11 +1,15 @@
 # Spear CRM
 
-[![ci](https://github.com/spear/spear-demo-crm/actions/workflows/ci.yml/badge.svg)](https://github.com/spear/spear-demo-crm/actions/workflows/ci.yml)
-[![codeql](https://github.com/spear/spear-demo-crm/actions/workflows/codeql.yml/badge.svg)](https://github.com/spear/spear-demo-crm/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/spear/spear-demo-crm/branch/main/graph/badge.svg)](https://codecov.io/gh/spear/spear-demo-crm)
+<!-- TODO(repo-url): replace `OWNER/REPO` everywhere in this file once the repo is pushed.
+     The list of placeholder URLs to swap is in CONTRIBUTING.md → "After the repo is pushed".
+-->
+
+[![ci](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![codeql](https://github.com/OWNER/REPO/actions/workflows/codeql.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/OWNER/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/OWNER/REPO)
 [![bundle](https://img.shields.io/badge/initial%20JS-%E2%89%A480%20KB%20gzipped-brightgreen)](.size-limit.json)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![node: 22](https://img.shields.io/badge/node-22-blue.svg)](.nvmrc)
+[![node: 22.14](https://img.shields.io/badge/node-22.14-blue.svg)](.nvmrc)
 [![conventional commits](https://img.shields.io/badge/commits-conventional-fe5196.svg)](https://www.conventionalcommits.org/)
 
 A CRM rebuilt around how moves actually work. Six screens — Today, Pipeline, Pond, Signals, Account 360, Quote, Workflows — designed for inside reps, AEs, and managers in a PCS-native, corporate-relo, and GSA context.
@@ -30,7 +34,7 @@ npm ci             # uses the lockfile
 npm run dev        # → http://localhost:5173
 ```
 
-Or open in [GitHub Codespaces](https://codespaces.new/spear/spear-demo-crm) — the `.devcontainer/` ships a ready-to-go TypeScript/Node image with Playwright preinstalled.
+Or open in [GitHub Codespaces](https://codespaces.new/OWNER/REPO) <!-- TODO(repo-url) --> — the `.devcontainer/` ships a ready-to-go TypeScript/Node image with Playwright preinstalled.
 
 ## Architecture
 
@@ -83,20 +87,20 @@ flowchart TB
 
 ## Scripts
 
-| Command                     | What it does                                              |
-| --------------------------- | --------------------------------------------------------- |
-| `npm run dev`               | Vite dev server with HMR                                  |
-| `npm run build`             | Typecheck (`tsc --noEmit`) + production Vite build        |
-| `npm run preview`           | Serve the production bundle locally                       |
-| `npm run typecheck`         | TypeScript strict-mode typecheck                          |
-| `npm run lint`              | ESLint flat config (TS + React + Hooks + jsx-a11y)        |
-| `npm run format`            | Prettier write                                            |
-| `npm test`                  | Vitest unit tests (primitives)                            |
-| `npm run test:watch`        | Vitest in watch mode                                      |
-| `npm run test:cov`          | Vitest with v8 coverage (thresholds enforced for `lib/`)  |
-| `npm run test:e2e`          | Playwright smoke + axe a11y                               |
-| `npm run test:visual`       | Playwright pixel-diff regression (expects baselines)      |
-| `npm run test:visual:update`| Rewrite the visual baselines (review diff before commit)  |
+| Command                      | What it does                                             |
+| ---------------------------- | -------------------------------------------------------- |
+| `npm run dev`                | Vite dev server with HMR                                 |
+| `npm run build`              | Typecheck (`tsc --noEmit`) + production Vite build       |
+| `npm run preview`            | Serve the production bundle locally                      |
+| `npm run typecheck`          | TypeScript strict-mode typecheck                         |
+| `npm run lint`               | ESLint flat config (TS + React + Hooks + jsx-a11y)       |
+| `npm run format`             | Prettier write                                           |
+| `npm test`                   | Vitest unit tests (primitives)                           |
+| `npm run test:watch`         | Vitest in watch mode                                     |
+| `npm run test:cov`           | Vitest with v8 coverage (thresholds enforced for `lib/`) |
+| `npm run test:e2e`           | Playwright smoke + axe a11y                              |
+| `npm run test:visual`        | Playwright pixel-diff regression (expects baselines)     |
+| `npm run test:visual:update` | Rewrite the visual baselines (review diff before commit) |
 
 ## Directory layout
 
@@ -155,14 +159,14 @@ Every entity (person, account, deal, base, signal, doc, rep, lane) is a first-cl
 
 ### Keyboard
 
-| Keys             | Action                                   |
-| ---------------- | ---------------------------------------- |
-| `g t/p/h/s/a/q/w`| Jump to Today / Pipeline / Pond / Signals / Account / Quote / Workflows |
-| `⌘K`             | Open command palette                      |
-| `⌘⇧F`            | Toggle Today focus mode                   |
-| `Esc`            | Close peek / palette / clear focus        |
-| `J` / `K`        | Next / prev card in focus mode            |
-| `X`              | Mark called + advance                     |
+| Keys              | Action                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| `g t/p/h/s/a/q/w` | Jump to Today / Pipeline / Pond / Signals / Account / Quote / Workflows |
+| `⌘K`              | Open command palette                                                    |
+| `⌘⇧F`             | Toggle Today focus mode                                                 |
+| `Esc`             | Close peek / palette / clear focus                                      |
+| `J` / `K`         | Next / prev card in focus mode                                          |
+| `X`               | Mark called + advance                                                   |
 
 ### Accessibility
 
@@ -176,6 +180,7 @@ Every entity (person, account, deal, base, signal, doc, rep, lane) is a first-cl
 ## Deploy
 
 Vercel auto-detects the Vite project. `vercel.json` ships:
+
 - HSTS, CSP, X-Frame-Options, Permissions-Policy, Referrer-Policy
 - Immutable `Cache-Control` on `/assets/*` and `/fonts/*`
 - SPA rewrite fallback to `index.html`
@@ -202,15 +207,15 @@ The main chunk is ~**57 KB gzipped**. Per-route chunks are 2–8 KB gzipped. If 
 
 `src/domain/` is the durable layer. State is derived from an append-only event log; nothing important is held in React state alone.
 
-| File | What it owns |
-|---|---|
-| [events.ts](src/domain/events.ts) | `EventLog` interface + `InMemoryEventLog` (tests) + `IndexedDbEventLog` (browser). Typed `DomainEvent` union per stream. |
-| [deal-machine.ts](src/domain/deal-machine.ts) | Stage-transition graph with explicit edges. Illegal moves return `stage_transition_invalid` and never reach the wire. |
-| [promises.ts](src/domain/promises.ts) | First-class durable timers. localStorage-rehydrated, ticker fires `missed`/`escalated` events. The Today sidebar subscribes. |
-| [schedules.ts](src/domain/schedules.ts) | Per-source `ScheduleHandle` with cadence, jitter, retry policy, dead-letter, recent-runs history. The Signals page reads it live. |
-| [workflow-def.ts](src/domain/workflow-def.ts) | `WorkflowDefinition` type + immutable registry. Every flow has an `id` + `version`; in-flight runs pin to the version they started on. |
-| [workflow-runner.ts](src/domain/workflow-runner.ts) | `validate` / `dryRun` / `run` / `replay` / `patched()`. The Workflows screen renders from this. |
-| [projections.ts](src/domain/projections.ts) | Pure folds over the event log: `accountActivity`, `dealCurrentStage`, `dealStageHistory`. |
+| File                                                | What it owns                                                                                                                           |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [events.ts](src/domain/events.ts)                   | `EventLog` interface + `InMemoryEventLog` (tests) + `IndexedDbEventLog` (browser). Typed `DomainEvent` union per stream.               |
+| [deal-machine.ts](src/domain/deal-machine.ts)       | Stage-transition graph with explicit edges. Illegal moves return `stage_transition_invalid` and never reach the wire.                  |
+| [promises.ts](src/domain/promises.ts)               | First-class durable timers. localStorage-rehydrated, ticker fires `missed`/`escalated` events. The Today sidebar subscribes.           |
+| [schedules.ts](src/domain/schedules.ts)             | Per-source `ScheduleHandle` with cadence, jitter, retry policy, dead-letter, recent-runs history. The Signals page reads it live.      |
+| [workflow-def.ts](src/domain/workflow-def.ts)       | `WorkflowDefinition` type + immutable registry. Every flow has an `id` + `version`; in-flight runs pin to the version they started on. |
+| [workflow-runner.ts](src/domain/workflow-runner.ts) | `validate` / `dryRun` / `run` / `replay` / `patched()`. The Workflows screen renders from this.                                        |
+| [projections.ts](src/domain/projections.ts)         | Pure folds over the event log: `accountActivity`, `dealCurrentStage`, `dealStageHistory`.                                              |
 
 The single most important test is [replay.test.ts](src/domain/replay.test.ts): given a frozen event log, `replay(def, events)` produces a `RunResult` byte-identical to the live `run()` that wrote it. That's the determinism contract.
 
@@ -218,17 +223,17 @@ The single most important test is [replay.test.ts](src/domain/replay.test.ts): g
 
 `src/ontology/` formalizes the Spear data model. One declaration drives forms, queries, action previews, and the read-audit trail.
 
-| File | What it owns |
-|---|---|
-| [define.ts](src/ontology/define.ts) | `defineOntology({ objectTypes, actionTypes })` — validates, builds inverse-link index, returns frozen handle |
-| [spear.ts](src/ontology/spear.ts) | The actual Spear ontology: 6 object types, bidirectional links, 3 typed actions |
-| [marking.ts](src/ontology/marking.ts) | `Marking` enum (low/medium/high/restricted), `canRead`, `MarkingContext`, redaction sentinel |
-| [property-types.ts](src/ontology/property-types.ts) | `PropertyDescriptor` builders (string/enum/money/instant/email/phone/document/branded id) |
-| [object-set.ts](src/ontology/object-set.ts) | Composable, marking-aware, URL-serializable `ObjectSet<T>` query builder |
-| [lineage.ts](src/ontology/lineage.ts) | `DerivedValue<T>` with weight-validated contributors — every spear-score audits back to its inputs |
-| [action-runner.ts](src/ontology/action-runner.ts) | `previewAction()` / `applyAction()` lifecycle with diff + side-effect summaries |
-| [audit.ts](src/ontology/audit.ts) | `recordObjectViewed` + `recordSetQueried` — the read-audit log |
-| [projects.ts](src/ontology/projects.ts) | `ProjectId` (pod scoping) + `intersects` + `filterByProjects` |
+| File                                                | What it owns                                                                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [define.ts](src/ontology/define.ts)                 | `defineOntology({ objectTypes, actionTypes })` — validates, builds inverse-link index, returns frozen handle |
+| [spear.ts](src/ontology/spear.ts)                   | The actual Spear ontology: 6 object types, bidirectional links, 3 typed actions                              |
+| [marking.ts](src/ontology/marking.ts)               | `Marking` enum (low/medium/high/restricted), `canRead`, `MarkingContext`, redaction sentinel                 |
+| [property-types.ts](src/ontology/property-types.ts) | `PropertyDescriptor` builders (string/enum/money/instant/email/phone/document/branded id)                    |
+| [object-set.ts](src/ontology/object-set.ts)         | Composable, marking-aware, URL-serializable `ObjectSet<T>` query builder                                     |
+| [lineage.ts](src/ontology/lineage.ts)               | `DerivedValue<T>` with weight-validated contributors — every spear-score audits back to its inputs           |
+| [action-runner.ts](src/ontology/action-runner.ts)   | `previewAction()` / `applyAction()` lifecycle with diff + side-effect summaries                              |
+| [audit.ts](src/ontology/audit.ts)                   | `recordObjectViewed` + `recordSetQueried` — the read-audit log                                               |
+| [projects.ts](src/ontology/projects.ts)             | `ProjectId` (pod scoping) + `intersects` + `filterByProjects`                                                |
 
 ## Storage layer (Postgres-style)
 
