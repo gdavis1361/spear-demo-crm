@@ -2,7 +2,7 @@
   {
     "name": "initial JS (entry chunk · gzip)",
     "path": "dist/assets/index-*.js",
-    "limit": "80 KB",
+    "limit": "70 KB",
     "gzip": true,
     "brotli": false
   },
