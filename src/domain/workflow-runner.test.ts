@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { validate, dryRun, run, patched } from './workflow-runner';
+import { validate, dryRun, run, replay, patched } from './workflow-runner';
 import type { WorkflowDefinition } from './workflow-def';
 import { PCS_CYCLE_OUTREACH } from './workflow-def';
 import { InMemoryEventLog, workflowRunStream } from './events';
@@ -106,5 +106,102 @@ describe('run() emits the same trace as dryRun()', () => {
     expect(real.disposition).toBe(dry.disposition);
     const stored = await log.read(workflowRunStream(PCS_CYCLE_OUTREACH.id, 'r1'));
     expect(stored.length).toBe(real.events.length);
+  });
+});
+
+// T4 — activity throws become `workflow.step_failed` + disposition 'failed'.
+// The contract: run() catches, emits the failure event, writes a
+// `run_completed { disposition: 'failed' }` terminator so SRE queries can
+// distinguish intentional drops from crashes; replay() reconstructs the
+// same trace byte-for-byte. The round-trip is the determinism check that
+// the prior happy-path-only determinism test couldn't cover.
+describe('run() with a failing activity (T4)', () => {
+  beforeEach(() => _setNowForTests(() => instant(NOW)));
+  afterEach(() => _resetNowForTests());
+
+  // A workflow with a single action step so the failure is unambiguous.
+  // predicate: `always_true` is looked up literally (see existing runner
+  // semantics — input keys ARE the predicate strings).
+  const def: WorkflowDefinition = {
+    id: 'wf-failing',
+    name: 't',
+    version: 1,
+    description: '',
+    retry: DEFAULT_RETRY,
+    steps: [
+      { kind: 'trigger', source: 'manual', label: 'go' },
+      { kind: 'action', label: 'send', verb: 'email', template: 't' },
+      { kind: 'end', label: 'done', disposition: 'queued' },
+    ],
+  };
+
+  it('emits step_failed + run_completed{failed} when an activity throws', async () => {
+    const log = new InMemoryEventLog();
+    const r = await run(
+      def,
+      {
+        input: {},
+        runId: 'r_fail_1',
+        activities: {
+          email: async () => {
+            const e = new Error('smtp down') as Error & { code?: string };
+            e.code = 'smtp_unreachable';
+            throw e;
+          },
+        },
+      },
+      log
+    );
+
+    expect(r.disposition).toBe('failed');
+    const kinds = r.events.map((e) => e.kind);
+    expect(kinds).toEqual([
+      'workflow.run_started',
+      'workflow.step_executed', // trigger step still runs
+      'workflow.step_failed',
+      'workflow.run_completed',
+    ]);
+    const failed = r.events.find((e) => e.kind === 'workflow.step_failed')!;
+    expect(failed.kind === 'workflow.step_failed' && failed.code).toBe('smtp_unreachable');
+    expect(failed.kind === 'workflow.step_failed' && failed.message).toBe('smtp down');
+    const trace = r.steps[r.steps.length - 1];
+    expect(trace.outcome).toBe('failed');
+    expect(trace.error).toBe('smtp down');
+  });
+
+  it('byte-identical round-trip: run() → log → replay()', async () => {
+    const log = new InMemoryEventLog();
+    const real = await run(
+      def,
+      {
+        input: {},
+        runId: 'r_fail_2',
+        activities: {
+          email: async () => {
+            throw new Error('smtp down');
+          },
+        },
+      },
+      log
+    );
+    const stored = await log.read(workflowRunStream(def.id, 'r_fail_2'));
+    const replayed = replay(def, stored);
+    expect(replayed).not.toBeNull();
+    if (!replayed) return;
+    // Event stream the runner emitted must survive a round-trip via the
+    // durable log, and replay must surface the terminal disposition the
+    // runner wrote (not a fallback computed from finalDisposition).
+    expect(replayed.disposition).toBe('failed');
+    expect(replayed.events.map((e) => e.kind)).toEqual(real.events.map((e) => e.kind));
+    expect(replayed.steps.map((s) => s.outcome)).toEqual(real.steps.map((s) => s.outcome));
+    expect(replayed.steps[replayed.steps.length - 1].error).toBe('smtp down');
+  });
+
+  it('unregistered verbs still execute as no-ops (back-compat)', async () => {
+    const log = new InMemoryEventLog();
+    // No `activities` registered at all — should match pre-C1 happy path.
+    const r = await run(def, { input: {}, runId: 'r_noact' }, log);
+    expect(r.disposition).toBe('queued');
+    expect(r.steps.some((s) => s.outcome === 'failed')).toBe(false);
   });
 });

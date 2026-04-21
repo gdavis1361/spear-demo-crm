@@ -14,9 +14,26 @@ import type { Instant } from '../lib/time';
 import { now as nowInstant } from '../lib/time';
 import type { EventLog, StoredEvent, WorkflowRunEvent } from './events';
 import { workflowRunStream } from './events';
-import type { WorkflowDefinition, WorkflowStep, Disposition } from './workflow-def';
+import type { WorkflowDefinition, WorkflowStep, Disposition, ActionVerb } from './workflow-def';
 import { track } from '../app/telemetry';
 import { startSpan } from '../app/observability';
+
+/**
+ * Per-verb activity implementation. Throwing (sync or async) is how an
+ * activity signals failure; `run()` catches the throw, emits
+ * `workflow.step_failed`, and marks the run terminal with disposition
+ * `'failed'`. A return value is ignored — the event log is the durable
+ * record of success, not the activity's return.
+ *
+ * C2 will register concrete activities from `runtime.ts`; in C1 the map
+ * is empty in production and the only exercise is via test injection.
+ */
+export type ActivityFn = (
+  step: Extract<WorkflowStep, { kind: 'action' }>,
+  ctx: RunContext
+) => Promise<void>;
+
+export type ActivityRegistry = Partial<Record<ActionVerb, ActivityFn>>;
 
 export interface RunContext {
   /** Input data piped in from the trigger. Opaque — predicates read from it. */
@@ -25,6 +42,12 @@ export interface RunContext {
   readonly runId: string;
   /** Optional override of "now" for deterministic tests. */
   readonly now?: () => Instant;
+  /**
+   * Verb → activity dispatcher. Absent in the current demo path; supplied
+   * by `bootRuntime` once activities are wired (C2). Action steps whose
+   * verb is not registered here execute as no-ops (current behavior).
+   */
+  readonly activities?: ActivityRegistry;
 }
 
 export interface RunStepTrace {
@@ -178,6 +201,14 @@ export function dryRun(def: WorkflowDefinition, ctx: RunContext): RunResult {
 }
 
 // ─── run with event emission ──────────────────────────────────────────────
+//
+// Unlike `dryRun`, `run()` owns its own step loop. Previously it wrapped
+// `dryRun` + persisted the trace; that was fine as long as nothing could
+// fail, but T4 requires the runner to catch activity throws and emit
+// `workflow.step_failed`. A step that throws diverges from the dryRun
+// prediction, so the two can no longer share a trace — `dryRun` stays
+// honest about "what would happen if every activity succeeded", `run()`
+// tells the truth about what actually happened.
 
 export async function run(
   def: WorkflowDefinition,
@@ -204,7 +235,7 @@ export async function run(
       },
     },
     async () => {
-      const r = dryRun(def, ctx);
+      const r = await executeRun(def, ctx);
       const stream = workflowRunStream(def.id, ctx.runId);
       // opKey is deterministic per (runId, eventIdx) — re-running this
       // function with the same runId is an idempotent storage operation.
@@ -238,6 +269,116 @@ export async function run(
     },
   });
   return result;
+}
+
+// Core executor — shared trace-building logic with async activity dispatch
+// + throw-to-step_failed mapping. Kept internal so `run()` stays the only
+// public entry point that writes to the log.
+async function executeRun(def: WorkflowDefinition, ctx: RunContext): Promise<RunResult> {
+  const nowFn = ctx.now ?? nowInstant;
+  const events: WorkflowRunEvent[] = [
+    {
+      kind: 'workflow.run_started',
+      at: nowFn(),
+      version: def.version,
+      trigger: (def.steps[0] as { source?: string }).source ?? 'manual',
+    },
+  ];
+  const steps: RunStepTrace[] = [];
+  let disposition: RunResult['disposition'] = 'dropped';
+  let waitingAtStep: number | null = null;
+  let failed = false;
+
+  for (let i = 0; i < def.steps.length; i++) {
+    const step = def.steps[i];
+
+    // Activity dispatch: only `action` steps whose verb is registered run
+    // a real function. Unregistered verbs fall through to a no-op — same
+    // as the prior runner — so a partially-wired activity table doesn't
+    // break untested workflows.
+    if (step.kind === 'action') {
+      const activity = ctx.activities?.[step.verb];
+      if (activity) {
+        try {
+          await activity(step, ctx);
+        } catch (cause) {
+          const at = nowFn();
+          const code =
+            (typeof cause === 'object' && cause && 'code' in cause
+              ? String((cause as { code: unknown }).code)
+              : undefined) ?? 'activity_threw';
+          const message = cause instanceof Error ? cause.message : 'activity failed';
+          events.push({
+            kind: 'workflow.step_failed',
+            at,
+            stepIdx: i,
+            stepKind: step.kind,
+            code,
+            message,
+          });
+          steps.push({
+            idx: i,
+            kind: step.kind,
+            outcome: 'failed',
+            label: step.label,
+            ms: 0,
+            error: message,
+          });
+          failed = true;
+          break;
+        }
+      }
+    }
+
+    const outcome = executeStep(step, ctx);
+    const at = nowFn();
+    if (outcome === 'wait') {
+      events.push({
+        kind: 'workflow.step_executed',
+        at,
+        stepIdx: i,
+        stepKind: step.kind,
+        outcome: 'skip',
+        ms: 0,
+      });
+      steps.push({ idx: i, kind: step.kind, outcome: 'wait', label: step.label, ms: 0 });
+      waitingAtStep = i;
+      break;
+    }
+    events.push({
+      kind: 'workflow.step_executed',
+      at,
+      stepIdx: i,
+      stepKind: step.kind,
+      outcome: outcome === 'ok' ? 'ok' : 'skip',
+      ms: 0,
+    });
+    steps.push({ idx: i, kind: step.kind, outcome, label: step.label, ms: 0 });
+    if (outcome === 'skip') {
+      disposition = 'dropped';
+      break;
+    }
+    if (step.kind === 'end') {
+      disposition = step.disposition;
+    }
+  }
+
+  if (failed) {
+    disposition = 'failed';
+    events.push({ kind: 'workflow.run_completed', at: nowFn(), disposition: 'failed' });
+  } else if (waitingAtStep === null) {
+    events.push({ kind: 'workflow.run_completed', at: nowFn(), disposition });
+  }
+
+  return {
+    runId: ctx.runId,
+    workflowId: def.id,
+    version: def.version,
+    disposition: waitingAtStep !== null ? 'waiting' : disposition,
+    steps,
+    totalMs: 0,
+    events,
+  };
 }
 
 // ─── replay ────────────────────────────────────────────────────────────────
