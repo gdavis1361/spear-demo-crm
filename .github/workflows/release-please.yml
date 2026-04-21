@@ -49,7 +49,7 @@ jobs:
         run: tar -czf spear-${{ needs.release-please.outputs.tag_name }}.tgz dist/
 
       - name: SLSA build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             spear-${{ needs.release-please.outputs.tag_name }}.tgz
