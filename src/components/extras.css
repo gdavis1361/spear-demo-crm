@@ -1,0 +1,474 @@
+/*
+ * Co-located styles for the lazy-loaded manager + honest-draft chunk.
+ *
+ * Imported from `extras.tsx`, which is React.lazy-split by App.tsx for
+ * the `mgr` role's Today screen, plus the honest-note drafter modal used
+ * by the Quote screen. Vite emits this as a sibling CSS asset of the
+ * `extras-*.js` chunk, so a user in the default `rep` role who never
+ * opens the drafter never downloads these bytes on first paint.
+ *
+ * Add a selector here only if it applies exclusively to those screens;
+ * anything shared with the main shell or rep-role screens belongs in
+ * `src/styles/crm.css`.
+ */
+
+/* ============================================================================
+   MANAGER TODAY
+   ============================================================================ */
+.mgr-today {
+  padding: 0 0 40px;
+}
+.mgr-today .today-hero {
+  padding: 28px 36px 24px;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 32px;
+  align-items: end;
+}
+.mgr-today .greet {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin-bottom: 10px;
+}
+.mgr-today h1 {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 34px;
+  letter-spacing: -0.018em;
+  color: var(--fg);
+  margin: 0;
+  max-width: 32ch;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+.mgr-today h1 em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--accent);
+  font-weight: 400;
+}
+.mgr-today .hero-right {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.mgr-today .hero-stat {
+  display: flex;
+  gap: 18px;
+}
+.mgr-today .hero-stat .s {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 64px;
+}
+.mgr-today .hero-stat .s .n {
+  font-family: var(--font-sans);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.mgr-today .hero-stat .s .l {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+.mgr-section-head {
+  padding: 18px 36px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+.mgr-section-head h3 {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg);
+  margin: 0;
+}
+.mgr-section-head .count {
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.mgr-section-head .why {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--fg-muted);
+}
+
+.mgr-list {
+  padding: 0 24px;
+}
+.mgr-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 220px 140px;
+  gap: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  margin-bottom: 8px;
+  align-items: center;
+}
+.mgr-row.risk-high {
+  border-color: color-mix(in oklab, var(--status-alert) 40%, var(--rule));
+  background: color-mix(in oklab, var(--status-alert) 3%, var(--bg-raised));
+  border-left: 3px solid var(--status-alert);
+  padding-left: 18px;
+}
+.mgr-rep {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.mgr-rep .ini {
+  width: 38px;
+  height: 38px;
+  border-radius: 2px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--rule-strong);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg);
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.mgr-rep .name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.mgr-rep .pod {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-subtle);
+  letter-spacing: 0.04em;
+}
+.mgr-state .status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+.st-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.st-dot.in-focus {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.st-dot.queue {
+  background: var(--olive-500);
+}
+.st-dot.risk {
+  background: var(--status-alert);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-alert) 20%, transparent);
+}
+.mgr-state .now {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.mgr-state .now em {
+  color: var(--fg);
+  font-style: normal;
+  font-weight: 500;
+}
+.mgr-promise .k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin-bottom: 3px;
+}
+.mgr-promise .v {
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.mgr-promise .v.overdue {
+  color: var(--status-alert);
+}
+.mgr-actions {
+  text-align: right;
+}
+.mgr-note {
+  margin: 24px 36px 0;
+  padding: 20px 22px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.mgr-note .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin-bottom: 8px;
+}
+.mgr-note .body {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 15px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+  max-width: 72ch;
+}
+.mgr-note .body em {
+  color: var(--fg);
+  font-weight: 500;
+  font-style: italic;
+}
+
+/* ============================================================================
+   HONEST-NOTE DRAFTER (modal)
+   ============================================================================ */
+.draft-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  backdrop-filter: blur(2px);
+  animation: fade-up 180ms var(--ease-standard);
+}
+.draft {
+  width: 860px;
+  max-width: 100%;
+  max-height: 90vh;
+  background: var(--bg-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.draft-head {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.draft-head .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin-bottom: 6px;
+}
+.draft-head h3 {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--fg);
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+.draft-head .draft-sub {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+  max-width: 62ch;
+  line-height: 1.5;
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+.draft-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 0;
+  overflow: hidden;
+}
+.draft-left {
+  padding: 20px 20px;
+  border-right: 1px solid var(--rule);
+  overflow: auto;
+}
+.draft-left .draft-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  margin-bottom: 10px;
+}
+.draft-tmpls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.draft-tmpl {
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--bg);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+.draft-tmpl:hover {
+  border-color: var(--rule-strong);
+}
+.draft-tmpl.on {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 6%, var(--bg));
+}
+.draft-tmpl .lbl {
+  font-size: 12.5px;
+  color: var(--fg);
+  font-weight: 500;
+}
+.draft-tmpl .pv {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.draft-rules {
+  margin: 0;
+  padding-left: 16px;
+  list-style: none;
+}
+.draft-rules li {
+  position: relative;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+  padding: 3px 0;
+}
+.draft-rules li::before {
+  content: '—';
+  position: absolute;
+  left: -16px;
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+}
+.draft-right {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  min-width: 0;
+}
+.draft-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.draft-editor-head .draft-k {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+.draft-counts {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-subtle);
+  letter-spacing: 0.04em;
+  display: flex;
+  gap: 6px;
+}
+.draft-counts strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.draft-textarea {
+  flex: 1;
+  min-height: 220px;
+  resize: vertical;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 14px 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.55;
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+.draft-textarea:focus {
+  border-color: var(--accent);
+}
+.draft-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 14px;
+  padding-top: 8px;
+}
+.chk {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+.chk.ok {
+  color: var(--olive-500);
+}
+.chk.fail {
+  color: var(--status-alert);
+}
+.draft-foot {
+  padding: 14px 24px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg);
+}
+.draft-foot-note {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}

@@ -23,7 +23,11 @@ import './styles/crm.css';
 import './styles/nouns.css';
 
 // Observability first: captures any exception thrown during the boot sequence.
-initObservability();
+// Fire-and-forget — `initObservability` is async now (Sentry is dynamic-
+// imported only when a DSN is configured), but we don't block render on it.
+// web-vitals registers synchronously inside initObservability so LCP/FCP
+// hooks are in place before the first paint anyway.
+void initObservability();
 
 // Wrap each boot stage so a failure in one emits a structured
 // `app.boot_failed` event instead of a silent blank page. We `flushTelemetry`
