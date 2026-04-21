@@ -33,6 +33,7 @@
     "test:visual": "playwright test --project=chromium-visual",
     "test:visual:update": "playwright test --project=chromium-visual --update-snapshots",
     "size": "size-limit",
+    "seed": "tsx src/seeds/cli.ts",
     "sbom": "npm sbom --sbom-format=spdx --omit=dev > sbom.spdx.json",
     "audit:supply-chain": "npm audit signatures && npm audit --audit-level=high --omit=dev",
     "prepare": "husky || true"
@@ -66,6 +67,7 @@
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.59.1",
     "@size-limit/file": "^11.2.0",
+    "@types/node": "^25.6.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
@@ -81,6 +83,7 @@
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.2",
     "size-limit": "^11.2.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.58.2",
     "vite": "^5.4.11",

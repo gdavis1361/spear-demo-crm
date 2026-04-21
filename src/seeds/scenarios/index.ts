@@ -4,6 +4,7 @@
 import { registry } from '../registry';
 import { emptyScenario } from './empty';
 import { canonicalScenario } from './canonical';
+import { busyRepScenario } from './busy-rep';
 
 let registered = false;
 
@@ -12,6 +13,7 @@ export function registerAllScenarios(): void {
   registered = true;
   registry.register(emptyScenario);
   registry.register(canonicalScenario);
+  registry.register(busyRepScenario);
 }
 
 /** Test-only: unregister everything + reset the `registered` flag. */
