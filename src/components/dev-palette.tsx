@@ -15,6 +15,7 @@
 // `import.meta.env.DEV`.
 
 import React from 'react';
+import { useDialog } from '../lib/use-dialog';
 
 interface ScenarioInfo {
   readonly name: string;
@@ -40,7 +41,11 @@ export function DevPalette(): React.ReactElement | null {
   const listRef = React.useRef<HTMLUListElement | null>(null);
   const current = currentSeedName();
 
-  // Toggle: Cmd+Shift+S / Ctrl+Shift+S. Esc closes.
+  const handleClose = React.useCallback(() => setOpen(false), []);
+  // useDialog handles Escape + focus trap + focus return. Our manual
+  // keydown listener below only binds the *toggle* (Cmd+Shift+S).
+  const { containerRef } = useDialog({ open, onClose: handleClose });
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const mod = e.metaKey || e.ctrlKey;
@@ -49,7 +54,6 @@ export function DevPalette(): React.ReactElement | null {
         setOpen((o) => !o);
         setSelIdx(0);
       }
-      if (e.key === 'Escape') setOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -128,10 +132,15 @@ export function DevPalette(): React.ReactElement | null {
       data-testid="dev-palette-overlay"
     >
       <div
+        ref={containerRef}
         className="devp"
         role="dialog"
         aria-modal="true"
         aria-labelledby="devp-title"
+        // Fallback focus target for useDialog when the scenario list is
+        // still loading (no focusable descendants yet). Once scenarios
+        // arrive, the list effect below moves focus to the first option.
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >

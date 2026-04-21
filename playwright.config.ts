@@ -25,6 +25,7 @@ export default defineConfig({
       testMatch: [
         'smoke.spec.ts',
         'a11y.spec.ts',
+        'a11y-interactions.spec.ts',
         'seed-activation.spec.ts',
         'seed-banner.spec.ts',
         'dev-palette.spec.ts',
