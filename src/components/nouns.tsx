@@ -596,7 +596,7 @@ interface ResolvedNoun {
   id: string;
   label: string;
   state?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `ResolvedNoun` is the narrow shape verb banks read; the index-signature `any` lets call-sites attach noun-kind-specific fields (e.g. deal.stage, person.atRisk) without widening the base type. Concrete narrowing happens at each consumer.
   [key: string]: any;
 }
 

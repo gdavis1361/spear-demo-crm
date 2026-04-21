@@ -277,7 +277,7 @@ export function Signals() {
           "interactive role ⇒ focusable" check is correct for most widgets
           but wrong for composite grid roles.
         */}
-        {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus */}
+        {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus -- WAI-ARIA APG "Data Grids": the grid container is not itself a tab stop; focusability lives on the currently-selected row via roving tabindex. See the block comment above for the full rationale. */}
         <div
           ref={gridRef}
           className="sig-list"
@@ -334,7 +334,7 @@ export function Signals() {
                   the row; keyboard interaction with the Noun is handled
                   by the Noun's own onKeyDown.
                 */}
-                {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/click-events-have-key-events */}
+                {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/click-events-have-key-events -- WAI-ARIA APG "Data Grids": cells without interactive children aren't individually focusable and the onClick just stops the bubble so clicking the Noun inside doesn't also select the row. Keyboard is handled on the Noun itself (see its own onKeyDown). */}
                 <div role="gridcell" className="id" onClick={(e) => e.stopPropagation()}>
                   <Noun kind="signal" id={s.id}>
                     {s.id}

@@ -53,18 +53,30 @@ jobs:
       # thresholds declared there, and posts/updates a single comment
       # per PR. No external service, no token, no `continue-on-error`
       # masking a silent failure.
-      - name: Coverage summary comment
+      # Runs eslint in count-only mode so the github-script step below can
+      # include "0 errors, 0 warnings" in the PR comment. `npm run lint`
+      # earlier in the job is the merge-gating check (--max-warnings=0);
+      # this second run is purely for the comment's invariant line.
+      - name: Collect ESLint counts for PR comment
+        if: github.event_name == 'pull_request'
+        id: lint_counts
+        continue-on-error: true
+        run: |
+          json=$(npx eslint src --format=json || true)
+          echo "$json" > .eslint-report.json
+
+      - name: Coverage + lint summary comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const path = 'coverage/coverage-summary.json';
-            if (!fs.existsSync(path)) {
+            const covPath = 'coverage/coverage-summary.json';
+            if (!fs.existsSync(covPath)) {
               core.warning('coverage-summary.json not found — skipping PR comment');
               return;
             }
-            const summary = JSON.parse(fs.readFileSync(path, 'utf8')).total;
+            const summary = JSON.parse(fs.readFileSync(covPath, 'utf8')).total;
             // Mirror the thresholds from vitest.config.ts. When they move
             // there, move them here.
             const thresholds = { lines: 75, functions: 65, branches: 60, statements: 75 };
@@ -74,6 +86,27 @@ jobs:
               const pass = pct >= thresholds[m];
               return `| ${m} | ${pct.toFixed(2)}% | ${thresholds[m]}% | ${pass ? 'ok' : 'below'} |`;
             });
+
+            // Lint invariant: names the "0 warnings" invariant out loud
+            // so a silent drift back from the 37-warning cleanup is
+            // visible on every PR. If the report is missing (rare), we
+            // say so rather than lying.
+            let lintLine = 'ESLint: report unavailable';
+            const lintPath = '.eslint-report.json';
+            if (fs.existsSync(lintPath)) {
+              try {
+                const report = JSON.parse(fs.readFileSync(lintPath, 'utf8'));
+                let errors = 0, warnings = 0;
+                for (const file of report) {
+                  errors += file.errorCount || 0;
+                  warnings += file.warningCount || 0;
+                }
+                lintLine = `ESLint: ${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'} (gated at 0)`;
+              } catch (e) {
+                lintLine = 'ESLint: report parse failed';
+              }
+            }
+
             const body = [
               '### Coverage summary',
               '',
@@ -81,7 +114,9 @@ jobs:
               '| --- | ---: | ---: | :---: |',
               ...rows,
               '',
-              '<sub>Reporter: `vitest --coverage` · Thresholds: `vitest.config.ts`</sub>',
+              lintLine,
+              '',
+              '<sub>Reporter: `vitest --coverage` · Thresholds: `vitest.config.ts` · Lint gate: `--max-warnings=0`</sub>',
             ].join('\n');
 
             // One comment per PR, updated in place. Saves a scroll on

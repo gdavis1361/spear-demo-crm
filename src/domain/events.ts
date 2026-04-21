@@ -27,15 +27,11 @@ import { validatePayload, validateEnvelope } from './event-schema';
 // (seed-activation, which runs in the initial JS chunk) should import
 // from `./db-name` directly to keep Zod out of their tree.
 export { getDbName, setDbName };
-import type {
-  DealEvent as _DealEvent,
-  AccountEvent as _AccountEvent,
-  PromiseEvent as _PromiseEvent,
-  ScheduleEvent as _ScheduleEvent,
-  WorkflowRunEvent as _WorkflowRunEvent,
-  SignalEvent as _SignalEvent,
-} from './event-types';
 
+// Re-export the domain event types. The previous `import type { X as _X }`
+// block above this export was a dead speculative workaround for a vanished
+// `@typescript-eslint/no-unused-vars` false-positive — removed, with
+// `unused-imports/no-unused-imports` now catching such drift automatically.
 export type {
   DealEvent,
   AccountEvent,
