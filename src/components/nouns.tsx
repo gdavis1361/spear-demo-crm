@@ -240,31 +240,40 @@ interface Verb {
   primary?: boolean;
 }
 
-type VerbFn = (role: Role) => Verb[];
+// `role` is optional because the majority of verb lists are role-agnostic.
+// Only the one factory that actually branches on role declares the param
+// — the rest are bare arrays or zero-arg functions. `getVerbs()` still
+// passes role unconditionally; the unused-here-used-there asymmetry is
+// what the old `(role: Role) => Verb[]` signature + 15 unused `role`
+// params was hiding.
+type VerbFn = (role?: Role) => Verb[];
 type VerbBank = Record<string, VerbFn>;
 
 const VERBS: Record<string, VerbBank> = {
   person: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'call', label: 'Call', kbd: '⌥C', primary: true },
       { id: 'message', label: 'Message', kbd: '⌥M' },
       { id: 'quote', label: 'Quote', kbd: '⌥Q' },
       { id: 'snooze', label: 'Snooze 2h', kbd: '⌥S' },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
     ],
-    'in-quote': (role: Role) => [
+    'in-quote': () => [
       { id: 'call', label: 'Call', kbd: '⌥C', primary: true },
       { id: 'send-quote', label: 'Resend quote', kbd: '⌥Q' },
       { id: 'recalc', label: 'Recalc quote', kbd: '⌥R' },
       { id: 'snooze', label: 'Snooze 2h', kbd: '⌥S' },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
     ],
-    'in-bafo': (role: Role) => [
+    'in-bafo': () => [
       { id: 'draft-bafo', label: 'Draft BAFO', kbd: '⌥B', primary: true },
       { id: 'call', label: 'Call', kbd: '⌥C' },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
     ],
-    'at-risk': (role: Role) =>
+    // The one factory that actually branches on role — managers get the
+    // escalation actions, reps get the direct ones. Keeping `role` here
+    // is legitimate signal; removing it from the other 15 is too.
+    'at-risk': (role?: Role) =>
       role === 'mgr'
         ? [
             { id: 'pair-up', label: 'Pair up', kbd: '⌥P', primary: true },
@@ -276,11 +285,11 @@ const VERBS: Record<string, VerbBank> = {
             { id: 'call', label: 'Call', kbd: '⌥C', primary: true },
             { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
           ],
-    performing: (role: Role) => [
+    performing: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
       { id: 'praise', label: 'Send praise', kbd: '⌥P' },
     ],
-    'active-lead': (role: Role) => [
+    'active-lead': () => [
       { id: 'call', label: 'Call', kbd: '⌥C', primary: true },
       { id: 'quote', label: 'Start quote', kbd: '⌥Q' },
       { id: 'snooze', label: 'Snooze 2h', kbd: '⌥S' },
@@ -288,45 +297,45 @@ const VERBS: Record<string, VerbBank> = {
     ],
   },
   account: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'new-deal', label: 'New deal', kbd: '⌥N' },
       { id: 'notes', label: 'Add note', kbd: '⌥A' },
     ],
-    'in-bafo': (role: Role) => [
+    'in-bafo': () => [
       { id: 'draft-bafo', label: 'Draft BAFO', kbd: '⌥B', primary: true },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
       { id: 'honest', label: 'Honest note', kbd: '⌥H' },
     ],
-    inbound: (role: Role) => [
+    inbound: () => [
       { id: 'call', label: 'Intro call', kbd: '⌥C', primary: true },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
       { id: 'brief', label: 'Write brief', kbd: '⌥W' },
     ],
   },
   deal: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'advance', label: 'Advance', kbd: '⌥A' },
       { id: 'notes', label: 'Add note', kbd: '⌥N' },
     ],
-    quote: (role: Role) => [
+    quote: () => [
       { id: 'open', label: 'Open quote ↗', kbd: '⌥↵', primary: true },
       { id: 'recalc', label: 'Recalc', kbd: '⌥R' },
       { id: 'send', label: 'Resend', kbd: '⌥S' },
     ],
-    bafo: (role: Role) => [
+    bafo: () => [
       { id: 'draft-bafo', label: 'Draft BAFO', kbd: '⌥B', primary: true },
       { id: 'open', label: 'Open ↗', kbd: '⌥↵' },
     ],
   },
   base: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'leads', label: 'See leads', kbd: '⌥L' },
       { id: 'signals', label: 'Filter signals', kbd: '⌥S' },
     ],
-    'active-cycle': (role: Role) => [
+    'active-cycle': () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'leads', label: 'See leads', kbd: '⌥L' },
       { id: 'signals', label: 'Filter signals', kbd: '⌥S' },
@@ -334,19 +343,19 @@ const VERBS: Record<string, VerbBank> = {
     ],
   },
   signal: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'snooze', label: 'Snooze', kbd: '⌥S' },
       { id: 'dismiss', label: 'Dismiss', kbd: '⌥X' },
     ],
-    p0: (role: Role) => [
+    p0: () => [
       { id: 'act', label: 'Take action', kbd: '⌥↵', primary: true },
       { id: 'open', label: 'Open ↗', kbd: '⌥O' },
       { id: 'snooze', label: 'Snooze', kbd: '⌥S' },
     ],
   },
   rep: {
-    _default: (role: Role) => [
+    _default: () => [
       { id: 'open', label: 'Open ↗', kbd: '⌥↵', primary: true },
       { id: 'slack', label: 'Slack', kbd: '⌥M' },
     ],
@@ -550,6 +559,7 @@ function Peek() {
 
   return (
     <>
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- WAI-ARIA APG "Modal Dialog": peek backdrop sits outside the focus trap; Esc-to-close is handled at document level by the peek stack listener (see useEffect at `window.addEventListener('keydown'` above). A key listener on the backdrop itself would be unreachable. */}
       <div className="peek-backdrop" onClick={clearPeek}></div>
       {peekStack.map((key, i) => {
         const noun = resolveNoun(key);
@@ -586,7 +596,7 @@ interface ResolvedNoun {
   id: string;
   label: string;
   state?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `ResolvedNoun` is the narrow shape verb banks read; the index-signature `any` lets call-sites attach noun-kind-specific fields (e.g. deal.stage, person.atRisk) without widening the base type. Concrete narrowing happens at each consumer.
   [key: string]: any;
 }
 
@@ -939,6 +949,7 @@ function CommandPalette({ role }: CommandPaletteProps) {
   if (!open) return null;
   return (
     <div className="palette-overlay" onClick={() => setOpen(false)} role="presentation">
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- WAI-ARIA APG "Combobox with Listbox Popup": `role="dialog"` is the semantic role; jsx-a11y treats the <div> element as non-interactive regardless of role. The onClick stops the backdrop's close-bubble; Esc is handled inside the input's onKeyDown. */}
       <div
         ref={containerRef}
         className="palette"
@@ -977,6 +988,7 @@ function CommandPalette({ role }: CommandPaletteProps) {
         </div>
         <ul id="palette-listbox" className="palette-results" role="listbox" aria-live="polite">
           {items.slice(0, 12).map((it, i) => (
+            // eslint-disable-next-line jsx-a11y/click-events-have-key-events -- WAI-ARIA APG "Combobox with Listbox Popup": per the pattern, keyboard lives on the input (see `onKeyDown={onKeyDown}` ~line 985 → ArrowUp/Down/Enter dispatched against selIdx). Listbox options carry onClick for mouse + are selected via `aria-selected` for AT. Adding onKeyDown here would duplicate the contract the input already owns.
             <li
               key={i}
               id={`palette-item-${i}`}

@@ -239,6 +239,7 @@ export function HonestDraft({ open, onClose, onInsert }: HonestDraftProps) {
 
   return (
     <div className="draft-overlay" onClick={onClose} role="presentation">
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- WAI-ARIA APG "Modal Dialog": `role="dialog"` is the semantic role; jsx-a11y treats the <div> element as non-interactive regardless of role. The onClick stops the backdrop's close-bubble; the keyboard equivalent is Esc, installed at document level by `useDialog`. */}
       <div
         className="draft"
         onClick={(e) => e.stopPropagation()}

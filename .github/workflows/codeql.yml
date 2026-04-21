@@ -21,6 +21,10 @@ jobs:
   analyze:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    # CodeQL's documented recommendation. Empirical wallclock here is
+    # ~1.5 min, but extended queries can grow meaningfully as the codebase
+    # does; 30 min is the GH-recommended ceiling.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

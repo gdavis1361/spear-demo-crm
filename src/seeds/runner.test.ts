@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { InMemoryEventLog } from '../domain/events';
 import { PromiseStore } from '../domain/promises';
 import { registry } from './registry';

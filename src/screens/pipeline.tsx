@@ -50,7 +50,13 @@ function PipeCard({ d, onMove }: PipeCardProps) {
           role="menu"
           tabIndex={-1}
           className="pipe-card-menu"
+          // Pair onClick + onKeyDown so pointer AND keyboard events
+          // that originated on a menuitem don't bubble out of the menu
+          // (e.g. into the card's own click handler). Without the
+          // keyboard half, Enter on a menuitem was toggling the card
+          // selection underneath the menu.
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
         >
           {STAGES.filter((s) => canTransition(d.stage, s.k)).map((s) => (
             <button
@@ -273,6 +279,7 @@ export function PipelineKanban() {
         const stageDeals = deals.filter((d) => d.stage === s.k);
         const count = stageDeals.length;
         return (
+          // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- HTML5 drag-and-drop is inherently pointer-only; there is no portable keyboard equivalent without a library like `dnd-kit`. Keyboard users move deals through the `.pipe-card-menu-btn` "Move to stage" menu on each card (see PipeCard ~line 34), which is a button with full keyboard semantics. The drag target div is a mouse-only enhancement.
           <div
             key={s.k}
             className={`kan-col${overStage === s.k ? ' drop' : ''}`}
@@ -291,6 +298,7 @@ export function PipelineKanban() {
             </div>
             <div className="kan-col-cards">
               {stageDeals.map((d) => (
+                // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- Drag SOURCE: same HTML5 DnD constraint as the drop target above. Keyboard path is the menu button inside `<PipeCard>` (`.pipe-card-menu-btn`) which opens a role="menu" with all valid stage transitions. The draggable wrapper is a mouse-only enhancement.
                 <div
                   key={d.dealId}
                   draggable

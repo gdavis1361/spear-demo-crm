@@ -131,6 +131,7 @@ export function DevPalette(): React.ReactElement | null {
       role="presentation"
       data-testid="dev-palette-overlay"
     >
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- WAI-ARIA APG "Modal Dialog": `role="dialog"` is the semantic role the element carries; jsx-a11y treats <div> element-type as non-interactive independent of role, which is correct for most cases but spurious for dialog containers. The onClick stops the backdrop's close-bubble; onKeyDown is already present. */}
       <div
         ref={containerRef}
         className="devp"

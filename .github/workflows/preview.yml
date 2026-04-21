@@ -1,0 +1,123 @@
+name: preview
+
+# Per-PR preview deployments on Vercel. Builds the branch, uploads a
+# preview (non-production) deployment, and posts the URL as a PR comment
+# so a reviewer can click through without pulling the branch locally.
+#
+# Why: deploy.yml only fires on push:main, and Vercel's GitHub App
+# integration is not posting previews on this repo (verified against
+# PRs #38 and #39 — no bot comments). This workflow fills the gap.
+#
+# Why not enable the Vercel App: doing so double-deploys every PR (this
+# workflow + the app). Pick one source of truth. If you enable the app
+# later, disable this workflow (delete the file — don't just comment
+# it out — so the source-of-truth story stays readable).
+#
+# Secrets + variables are the same set used by deploy.yml:
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID (required)
+#   VITE_SENTRY_DSN (optional)
+# Forks cannot access repo secrets; this workflow skips cleanly there.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  # One preview at a time per PR. A new push cancels the in-flight deploy
+  # so stale URLs don't linger at the top of the comment.
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  VERCEL_CLI: 'vercel@^51'
+
+jobs:
+  preview:
+    name: preview deploy
+    # Skip forks — they can't access secrets. A fork PR gets the usual
+    # "contributors: pull the branch to test locally" experience.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pull Vercel environment (preview)
+        run: npx ${{ env.VERCEL_CLI }} pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build (preview)
+        # No `--prod` — this is a preview build. Sentry release tag still
+        # carries the PR SHA so front-end errors can be attributed back.
+        run: npx ${{ env.VERCEL_CLI }} build --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_APP_VERSION: ${{ github.event.pull_request.head.sha }}
+
+      - name: Deploy preview
+        id: deploy
+        run: |
+          url=$(npx ${{ env.VERCEL_CLI }} deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview: $url"
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        with:
+          script: |
+            const url = process.env.URL;
+            const sha = context.payload.pull_request.head.sha.slice(0, 7);
+            const body = [
+              '### Preview deployment',
+              '',
+              `**URL:** ${url}`,
+              `**Commit:** \`${sha}\``,
+              '',
+              '<sub>Updated on every push. Forks skip (no secret access).</sub>',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(
+              (c) => c.user.type === 'Bot' && c.body.startsWith('### Preview deployment')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

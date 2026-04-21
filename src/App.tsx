@@ -126,8 +126,7 @@ export function App() {
 
   React.useEffect(() => {
     track({ name: 'app.mounted', props: { ground: t.ground, density: t.density } });
-    // only once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `app.mounted` fires exactly once per session at mount; re-firing on ground/density changes would inflate mount-count in the SLI.
   }, []);
 
   // Keyboard: g + key shortcuts for screen navigation
@@ -207,7 +206,7 @@ export function App() {
             default for scrollable main elements; see crm.css for the
             focus-visible handling.
           */}
-            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- `<main>` needs explicit tabIndex to satisfy WCAG 2.1.1 (scrollable-region-focusable) and 2.4.1 (skip-link target). See the block comment directly above. */}
             <main className="main" id="main" tabIndex={0}>
               <React.Suspense fallback={<ScreenSkeleton />}>
                 {screen === 'today' &&
