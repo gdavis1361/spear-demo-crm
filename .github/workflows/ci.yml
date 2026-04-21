@@ -36,6 +36,8 @@ jobs:
       - name: Unit tests with coverage
         run: npm run test:cov -- --reporter=verbose
 
+      # TODO(codecov): drop `continue-on-error` once CODECOV_TOKEN is configured
+      # in repo secrets and the first upload succeeds.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -75,9 +77,26 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      # Cache Playwright browser binaries — cuts ~30s off every job.
+      # Key is suffixed with `-all` because this job needs chromium/firefox/webkit;
+      # the visual-bootstrap workflow uses a `-chromium` cache so the two don't
+      # collide (a partial cache from bootstrap would leave firefox/webkit missing).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-all-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci
-      - name: Install Playwright browsers
+      - name: Install Playwright browsers (only if cache missed)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install Playwright OS deps (always — cached binaries skip this)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium firefox webkit
+
       - name: Smoke + a11y
         run: npx playwright test --project=${{ matrix.project }}
       - uses: actions/upload-artifact@v4
@@ -98,8 +117,20 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
       - name: Pixel diff against baselines
         run: npm run test:visual
       - uses: actions/upload-artifact@v4

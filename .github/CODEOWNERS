@@ -1,40 +1,43 @@
 # CODEOWNERS — auto-requested reviewers per path.
 # Order matters: the LAST matching pattern wins.
-# Replace placeholders with real GitHub teams or handles.
+#
+# Personal repo (no GitHub teams). Every change auto-requests review from
+# the repo owner. When the project graduates to an org with teams, replace
+# `@gdavis1361` with `@org/team` per area.
 
 # Default reviewer for anything unowned
-*                                @spear/maintainers
+*                                @gdavis1361
 
 # Frontend surfaces
-/src/components/                 @spear/frontend
-/src/screens/                    @spear/frontend
-/src/styles/                     @spear/frontend
+/src/components/                 @gdavis1361
+/src/screens/                    @gdavis1361
+/src/styles/                     @gdavis1361
 
 # Typed primitives + API boundary
-/src/lib/                        @spear/platform
-/src/api/                        @spear/platform
+/src/lib/                        @gdavis1361
+/src/api/                        @gdavis1361
 
 # Durable layer + ontology — extra eyes on these
-/src/domain/                     @spear/platform @spear/ontology
-/src/ontology/                   @spear/ontology
+/src/domain/                     @gdavis1361
+/src/ontology/                   @gdavis1361
 
 # App runtime + telemetry
-/src/app/                        @spear/platform
+/src/app/                        @gdavis1361
 
 # Tests
-/tests/                          @spear/qa
-/src/**/*.test.ts                @spear/qa
+/tests/                          @gdavis1361
+/src/**/*.test.ts                @gdavis1361
 
 # Build + repo plumbing
-/.github/                        @spear/devex
-/.devcontainer/                  @spear/devex
-/vite.config.ts                  @spear/devex
-/vitest.config.ts                @spear/devex @spear/qa
-/playwright.config.ts            @spear/devex @spear/qa
-/tsconfig*.json                  @spear/platform
-/package.json                    @spear/devex
-/package-lock.json               @spear/devex
+/.github/                        @gdavis1361
+/.devcontainer/                  @gdavis1361
+/vite.config.ts                  @gdavis1361
+/vitest.config.ts                @gdavis1361
+/playwright.config.ts            @gdavis1361
+/tsconfig*.json                  @gdavis1361
+/package.json                    @gdavis1361
+/package-lock.json               @gdavis1361
 
 # Security / ops
-/SECURITY.md                     @spear/security
-/.github/workflows/codeql.yml    @spear/security
+/SECURITY.md                     @gdavis1361
+/.github/workflows/codeql.yml    @gdavis1361

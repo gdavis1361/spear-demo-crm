@@ -16,6 +16,9 @@ sbom.spdx.json
 sbom.cdx.json
 *.sigstore.json
 
+# Husky regenerates this on every install — never check in
+.husky/_
+
 # Local env + editor
 .DS_Store
 .env*.local
@@ -24,3 +27,4 @@ sbom.cdx.json
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+.claude/

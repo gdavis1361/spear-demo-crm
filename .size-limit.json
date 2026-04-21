@@ -1,20 +1,30 @@
 [
   {
-    "name": "initial JS (entry chunk)",
+    "name": "initial JS (entry chunk · gzip)",
     "path": "dist/assets/index-*.js",
     "limit": "80 KB",
-    "gzip": true
+    "gzip": true,
+    "brotli": false
   },
   {
-    "name": "CSS",
+    "name": "CSS (gzip)",
     "path": "dist/assets/index-*.css",
     "limit": "40 KB",
-    "gzip": true
+    "gzip": true,
+    "brotli": false
   },
   {
-    "name": "largest lazy chunk",
+    "name": "schemas chunk · Zod runtime, largest lazy chunk by gzip",
+    "path": "dist/assets/schemas-*.js",
+    "limit": "22 KB",
+    "gzip": true,
+    "brotli": false
+  },
+  {
+    "name": "account-quote-workflows chunk · largest screen",
     "path": "dist/assets/account-quote-workflows-*.js",
     "limit": "12 KB",
-    "gzip": true
+    "gzip": true,
+    "brotli": false
   }
 ]

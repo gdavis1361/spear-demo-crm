@@ -35,16 +35,16 @@ If you'd rather not configure Node locally, the repo ships a Codespaces / Dev Co
 
 CI runs on every PR ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Required:
 
-| Gate                | Threshold                                                |
-| ------------------- | -------------------------------------------------------- |
-| `typecheck`         | 0 errors (strict TS)                                     |
-| `lint`              | 0 errors                                                 |
-| `unit`              | All tests pass; coverage at or above thresholds in `vitest.config.ts` |
-| `build`             | `tsc --noEmit && vite build` succeeds                    |
-| `e2e`               | Playwright smoke + axe a11y, no `serious`/`critical` violations |
-| `visual`            | Pixel-diff baselines reproduce within `0.2%` ratio       |
-| `bundle-budget`     | Initial JS chunk ≤ 80 KB gzipped                         |
-| `audit`             | `npm audit --audit-level=high` clean                     |
+| Gate            | Threshold                                                             |
+| --------------- | --------------------------------------------------------------------- |
+| `typecheck`     | 0 errors (strict TS)                                                  |
+| `lint`          | 0 errors                                                              |
+| `unit`          | All tests pass; coverage at or above thresholds in `vitest.config.ts` |
+| `build`         | `tsc --noEmit && vite build` succeeds                                 |
+| `e2e`           | Playwright smoke + axe a11y, no `serious`/`critical` violations       |
+| `visual`        | Pixel-diff baselines reproduce within `0.2%` ratio                    |
+| `bundle-budget` | Initial JS chunk ≤ 80 KB gzipped                                      |
+| `audit`         | `npm audit --audit-level=high` clean                                  |
 
 ## Releases
 
@@ -80,6 +80,32 @@ See [docs/architecture.md](docs/architecture.md) for the layered diagram.
 ## Reviewers
 
 CODEOWNERS routes review by area — see [`.github/CODEOWNERS`](.github/CODEOWNERS). At least one CODEOWNER must approve before merge.
+
+## Branch protection (operator setup)
+
+Configure on `main` after pushing the repo:
+
+- ✅ **Require a pull request before merging** — direct pushes blocked.
+- ✅ **Require approvals: 1** (or 2 for `area:ontology` / `area:domain` changes once teams exist).
+- ✅ **Dismiss stale approvals when new commits are pushed.**
+- ✅ **Require review from Code Owners** (effective once CODEOWNERS placeholders are replaced with real teams).
+- ✅ **Require status checks to pass before merging** + ✅ **Require branches to be up to date** with these contexts:
+  - `typecheck · lint · unit · build`
+  - `e2e (chromium-smoke)`
+  - `e2e (firefox-smoke)`
+  - `e2e (webkit-smoke)`
+  - `visual regression (chromium)`
+  - `supply chain`
+  - `analyze (javascript-typescript)`
+- ✅ **Require signed commits.**
+- ✅ **Require linear history.**
+- ✅ **Require deployments to succeed before merging** — none today; add when Vercel preview is wired.
+- ✅ **Restrict who can push to matching branches** to repo admins only (release-please bot must be allow-listed).
+- ❌ **Allow force pushes**: disabled on `main`. Allowed on `release-please-*` branches that the bot manages.
+
+## After the repo is pushed
+
+Replaced as of the initial `gdavis1361/spear-demo-crm` push. If the repo is ever forked or renamed, search-and-replace the literals `gdavis1361/spear-demo-crm` and re-visit `.github/CODEOWNERS` (currently all paths route to `@gdavis1361`; swap to `@org/team` patterns once teams exist).
 
 ## Reporting bugs / requesting features
 

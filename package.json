@@ -3,19 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "description": "Spear CRM — redesigned for how moves actually work.",
-  "homepage": "https://github.com/spear/spear-demo-crm",
+  "homepage": "https://github.com/gdavis1361/spear-demo-crm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spear/spear-demo-crm.git"
+    "url": "git+https://github.com/gdavis1361/spear-demo-crm.git"
   },
   "bugs": {
-    "url": "https://github.com/spear/spear-demo-crm/issues"
+    "url": "https://github.com/gdavis1361/spear-demo-crm/issues"
   },
   "author": "Spear team",
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22.14.0"
   },
   "packageManager": "npm@10.9.2",
   "scripts": {
@@ -35,7 +35,19 @@
     "size": "size-limit",
     "sbom": "npm sbom --sbom-format=spdx --omit=dev > sbom.spdx.json",
     "audit:supply-chain": "npm audit signatures && npm audit --audit-level=high --omit=dev",
-    "prepare": "node -e \"try { require('child_process').execSync('git rev-parse --git-dir', {stdio:'ignore'}); require('child_process').execSync('husky', {stdio:'inherit'}); } catch (e) {}\""
+    "prepare": "husky || true"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "src/**/*.css": [
+      "prettier --write"
+    ],
+    "*.{md,json,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@fontsource/instrument-serif": "^5.2.8",
@@ -64,6 +76,7 @@
     "globals": "^17.5.0",
     "happy-dom": "^20.9.0",
     "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.8.2",
     "size-limit": "^11.2.0",
     "typescript": "^5.6.3",

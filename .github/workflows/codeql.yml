@@ -30,7 +30,10 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          queries: security-and-quality
+          # Valid values: default | security-extended | a list of .ql files.
+          # `security-extended` covers OWASP Top 10 + the CWE classes that
+          # actually apply to a TS/React/IDB stack.
+          queries: security-extended
       - uses: github/codeql-action/analyze@v3
         with:
           category: /language:${{ matrix.language }}

@@ -36,149 +36,150 @@
   /* ---------------------------------------------------------------- */
 
   /* Paper — warm bone. Not white. Reads as real paper under real light. */
-  --paper-0:   #FBF9F4;  /* page */
-  --paper-50:  #F5F2EB;  /* raised card on page */
-  --paper-100: #EBE7DD;  /* rule, quiet divider */
-  --paper-200: #D9D3C4;  /* hairline contrast */
-  --paper-300: #B8B09C;  /* muted ink */
+  --paper-0: #fbf9f4; /* page */
+  --paper-50: #f5f2eb; /* raised card on page */
+  --paper-100: #ebe7dd; /* rule, quiet divider */
+  --paper-200: #d9d3c4; /* hairline contrast */
+  --paper-300: #b8b09c; /* muted ink */
 
   /* Graphite — warm near-black. Not pure black. Ops console ground. */
-  --graphite-950: #0E0F11;  /* console ground */
-  --graphite-900: #17181B;  /* card on ground */
-  --graphite-800: #23242A;  /* raised surface */
-  --graphite-700: #2F313A;  /* rule / chrome */
-  --graphite-600: #4A4D59;  /* muted body on dark */
-  --graphite-500: #6C707D;  /* secondary ink on dark */
-  --graphite-400: #9095A1;  /* tertiary ink on dark */
-  --graphite-300: #C4C7CF;  /* primary ink on dark */
-  --graphite-200: #E4E6EB;  /* emphasis on dark */
+  --graphite-950: #0e0f11; /* console ground */
+  --graphite-900: #17181b; /* card on ground */
+  --graphite-800: #23242a; /* raised surface */
+  --graphite-700: #2f313a; /* rule / chrome */
+  --graphite-600: #4a4d59; /* muted body on dark */
+  --graphite-500: #6c707d; /* secondary ink on dark */
+  --graphite-400: #9095a1; /* tertiary ink on dark */
+  --graphite-300: #c4c7cf; /* primary ink on dark */
+  --graphite-200: #e4e6eb; /* emphasis on dark */
 
   /* Ink — nearly-black-warm. Used for headlines on paper. */
   --ink-950: #111214;
-  --ink-900: #1A1C1F;
-  --ink-800: #2A2D32;
-  --ink-700: #3E424A;
-  --ink-600: #5A5F69;
-  --ink-500: #777D87;
+  --ink-900: #1a1c1f;
+  --ink-800: #2a2d32;
+  --ink-700: #3e424a;
+  --ink-600: #5a5f69;
+  --ink-500: #777d87;
 
   /* Signal Amber — THE accent. One color does the pointing work. */
   /* Derived from aviation panel lighting. High legibility on both grounds. */
-  --amber-700: #B8641B;  /* pressed on paper */
-  --amber-600: #D4761F;  /* default on paper */
-  --amber-500: #E8882A;  /* default on dark */
-  --amber-400: #F5A24C;  /* hover on dark */
-  --amber-300: #FBC583;  /* soft tint */
-  --amber-100: #FBE8D1;  /* wash */
-  --amber-50:  #FDF5E8;  /* background wash on paper */
+  --amber-800: #8f4d12; /* AA-safe with paper-0 text (5.9:1) — avatar chips, warn badges */
+  --amber-700: #b8641b; /* pressed on paper */
+  --amber-600: #d4761f; /* default on paper */
+  --amber-500: #e8882a; /* default on dark */
+  --amber-400: #f5a24c; /* hover on dark */
+  --amber-300: #fbc583; /* soft tint */
+  --amber-100: #fbe8d1; /* wash */
+  --amber-50: #fdf5e8; /* background wash on paper */
 
   /* Field Olive — supporting institutional hue. Map pins, "in transit", tags. */
-  --olive-800: #3D4A2E;
-  --olive-700: #4F5F3A;
-  --olive-600: #64774A;
-  --olive-500: #7A8E5D;
-  --olive-300: #B5C297;
-  --olive-100: #E2E6D4;
-  --olive-50:  #EFF2E4;
+  --olive-800: #3d4a2e;
+  --olive-700: #4f5f3a;
+  --olive-600: #64774a;
+  --olive-500: #7a8e5d;
+  --olive-300: #b5c297;
+  --olive-100: #e2e6d4;
+  --olive-50: #eff2e4;
 
   /* Semantic status — muted, institutional, not Bootstrap. */
-  --status-ok:       #4F7A4A;  /* "delivered" / green. Reserved. */
-  --status-ok-bg:    #E6EFE0;
-  --status-warn:     #B8641B;  /* same as amber-700 — warnings use the accent */
-  --status-warn-bg:  #FBE8D1;
-  --status-alert:    #A43D2C;  /* true failure red. Rare. */
-  --status-alert-bg: #F5DDD6;
-  --status-info:     #3E5F72;  /* neutral institutional blue for info only */
-  --status-info-bg:  #DCE7EE;
+  --status-ok: #4f7a4a; /* "delivered" / green. Reserved. */
+  --status-ok-bg: #e6efe0;
+  --status-warn: #b8641b; /* same as amber-700 — warnings use the accent */
+  --status-warn-bg: #fbe8d1;
+  --status-alert: #a43d2c; /* true failure red. Rare. */
+  --status-alert-bg: #f5ddd6;
+  --status-info: #3e5f72; /* neutral institutional blue for info only */
+  --status-info-bg: #dce7ee;
 
   /* ---------------------------------------------------------------- */
   /* SEMANTIC COLOR TOKENS — PAPER (default / consumer / marketing)  */
   /* ---------------------------------------------------------------- */
-  --bg:           var(--paper-0);
-  --bg-raised:    var(--paper-50);
-  --bg-sunken:    #F1EDE3;
-  --fg:           var(--ink-950);
-  --fg-muted:     var(--ink-700);
-  --fg-subtle:    var(--ink-500);
+  --bg: var(--paper-0);
+  --bg-raised: var(--paper-50);
+  --bg-sunken: #f1ede3;
+  --fg: var(--ink-950);
+  --fg-muted: var(--ink-700);
+  --fg-subtle: var(--ink-500);
   --fg-on-accent: var(--paper-0);
-  --rule:         var(--paper-100);
-  --rule-strong:  var(--paper-200);
-  --accent:       var(--amber-600);
+  --rule: var(--paper-100);
+  --rule-strong: var(--paper-200);
+  --accent: var(--amber-600);
   --accent-hover: var(--amber-700);
-  --accent-wash:  var(--amber-50);
-  --focus-ring:   var(--amber-600);
+  --accent-wash: var(--amber-50);
+  --focus-ring: var(--amber-600);
 
   /* ---------------------------------------------------------------- */
   /* TYPE STACK                                                       */
   /* ---------------------------------------------------------------- */
-  --font-sans:    'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-serif:   'Instrument Serif', ui-serif, Georgia, serif;
-  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', ui-serif, Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --font-display: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
 
   /* Type scale — tight, intentional. No "caption-small-xs". */
-  --t-mono:     11px;   /* tracking, serial numbers, tags */
-  --t-micro:    12px;   /* footnotes */
-  --t-small:    14px;   /* secondary UI */
-  --t-body:     16px;   /* body */
-  --t-body-lg:  18px;   /* lead paragraph */
-  --t-h5:       20px;
-  --t-h4:       24px;
-  --t-h3:       32px;
-  --t-h2:       44px;
-  --t-h1:       64px;
-  --t-display:  96px;   /* marketing hero only */
+  --t-mono: 11px; /* tracking, serial numbers, tags */
+  --t-micro: 12px; /* footnotes */
+  --t-small: 14px; /* secondary UI */
+  --t-body: 16px; /* body */
+  --t-body-lg: 18px; /* lead paragraph */
+  --t-h5: 20px;
+  --t-h4: 24px;
+  --t-h3: 32px;
+  --t-h2: 44px;
+  --t-h1: 64px;
+  --t-display: 96px; /* marketing hero only */
 
   /* Line-heights */
-  --lh-tight:    1.05;
-  --lh-snug:     1.2;
-  --lh-normal:   1.45;
-  --lh-relaxed:  1.6;
+  --lh-tight: 1.05;
+  --lh-snug: 1.2;
+  --lh-normal: 1.45;
+  --lh-relaxed: 1.6;
 
   /* Tracking */
-  --tr-tight:    -0.02em;
-  --tr-snug:     -0.01em;
-  --tr-normal:   0;
-  --tr-wide:     0.04em;
-  --tr-caps:     0.12em;    /* uppercase labels */
+  --tr-tight: -0.02em;
+  --tr-snug: -0.01em;
+  --tr-normal: 0;
+  --tr-wide: 0.04em;
+  --tr-caps: 0.12em; /* uppercase labels */
 
   /* Weights (Instrument Sans supports 400/500/600/700) */
-  --w-regular:   400;
-  --w-medium:    500;
-  --w-semibold:  600;
-  --w-bold:      700;
+  --w-regular: 400;
+  --w-medium: 500;
+  --w-semibold: 600;
+  --w-bold: 700;
 
   /* ---------------------------------------------------------------- */
   /* SPACING                                                          */
   /* ---------------------------------------------------------------- */
-  --s-1:  4px;
-  --s-2:  8px;
-  --s-3:  12px;
-  --s-4:  16px;
-  --s-5:  24px;
-  --s-6:  32px;
-  --s-7:  48px;
-  --s-8:  64px;
-  --s-9:  96px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
   --s-10: 128px;
 
   /* Radii — small, architectural. Not friendly-app round. */
-  --r-sm:  2px;
-  --r-md:  4px;
-  --r-lg:  8px;
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 8px;
   --r-pill: 999px;
 
   /* Shadows — earned, not default. Use sparingly; rules do most of the work. */
   --shadow-sm: 0 1px 0 rgba(17, 18, 20, 0.04), 0 1px 2px rgba(17, 18, 20, 0.04);
   --shadow-md: 0 1px 0 rgba(17, 18, 20, 0.04), 0 4px 12px rgba(17, 18, 20, 0.06);
   --shadow-lg: 0 1px 0 rgba(17, 18, 20, 0.05), 0 12px 32px rgba(17, 18, 20, 0.08);
-  --shadow-console: 0 1px 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.03);
+  --shadow-console: 0 1px 0 rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 
   /* Motion — calm, not bouncy. */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-exit:     cubic-bezier(0.4, 0, 1, 1);
-  --dur-fast:      120ms;
-  --dur-base:      180ms;
-  --dur-slow:      320ms;
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 320ms;
 }
 
 /* ============================================================================
@@ -186,21 +187,26 @@
    Apply via [data-ground="graphite"] or .ground-graphite on a container.
    ============================================================================ */
 
-[data-ground="graphite"],
+[data-ground='graphite'],
 .ground-graphite {
-  --bg:           var(--graphite-950);
-  --bg-raised:    var(--graphite-900);
-  --bg-sunken:    #08090B;
-  --fg:           var(--graphite-200);
-  --fg-muted:     var(--graphite-400);
-  --fg-subtle:    var(--graphite-500);
+  --bg: var(--graphite-950);
+  --bg-raised: var(--graphite-900);
+  --bg-sunken: #08090b;
+  --fg: var(--graphite-200);
+  --fg-muted: var(--graphite-300);
+  --fg-subtle: var(--graphite-400);
   --fg-on-accent: var(--graphite-950);
-  --rule:         var(--graphite-700);
-  --rule-strong:  var(--graphite-600);
-  --accent:       var(--amber-500);
+  --rule: var(--graphite-700);
+  --rule-strong: var(--graphite-600);
+  --accent: var(--amber-500);
   --accent-hover: var(--amber-400);
-  --accent-wash:  rgba(232, 136, 42, 0.08);
-  --focus-ring:   var(--amber-500);
+  --accent-wash: rgba(232, 136, 42, 0.08);
+  --focus-ring: var(--amber-500);
+  /* Status colors — lifted for AA contrast against graphite-950/900. */
+  --status-ok: #88b078;
+  --status-warn: #e88736;
+  --status-alert: #d16a58;
+  --status-info: #86acc0;
 }
 
 /* ============================================================================
@@ -213,12 +219,13 @@ body {
   line-height: var(--lh-normal);
   color: var(--fg);
   background: var(--bg);
-  font-feature-settings: "ss01", "cv11"; /* Instrument stylistic alts */
+  font-feature-settings: 'ss01', 'cv11'; /* Instrument stylistic alts */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-.display, h1.display {
+.display,
+h1.display {
   font-family: var(--font-display);
   font-size: var(--t-display);
   font-weight: var(--w-medium);
@@ -228,7 +235,8 @@ body {
   text-wrap: balance;
 }
 
-h1, .h1 {
+h1,
+.h1 {
   font-family: var(--font-display);
   font-size: var(--t-h1);
   font-weight: var(--w-medium);
@@ -238,7 +246,8 @@ h1, .h1 {
   text-wrap: balance;
 }
 
-h2, .h2 {
+h2,
+.h2 {
   font-family: var(--font-display);
   font-size: var(--t-h2);
   font-weight: var(--w-medium);
@@ -248,7 +257,8 @@ h2, .h2 {
   text-wrap: balance;
 }
 
-h3, .h3 {
+h3,
+.h3 {
   font-family: var(--font-sans);
   font-size: var(--t-h3);
   font-weight: var(--w-medium);
@@ -257,7 +267,8 @@ h3, .h3 {
   color: var(--fg);
 }
 
-h4, .h4 {
+h4,
+.h4 {
   font-family: var(--font-sans);
   font-size: var(--t-h4);
   font-weight: var(--w-semibold);
@@ -265,7 +276,8 @@ h4, .h4 {
   color: var(--fg);
 }
 
-h5, .h5 {
+h5,
+.h5 {
   font-family: var(--font-sans);
   font-size: var(--t-h5);
   font-weight: var(--w-semibold);
@@ -273,7 +285,8 @@ h5, .h5 {
   color: var(--fg);
 }
 
-p, .p {
+p,
+.p {
   font-size: var(--t-body);
   line-height: var(--lh-relaxed);
   color: var(--fg-muted);
@@ -281,14 +294,16 @@ p, .p {
   max-width: 68ch;
 }
 
-.lede, p.lede {
+.lede,
+p.lede {
   font-size: var(--t-body-lg);
   line-height: var(--lh-relaxed);
   color: var(--fg);
   max-width: 56ch;
 }
 
-.editorial, .pull-quote {
+.editorial,
+.pull-quote {
   font-family: var(--font-serif);
   font-size: var(--t-h3);
   font-weight: var(--w-regular);
@@ -298,7 +313,8 @@ p, .p {
   text-wrap: balance;
 }
 
-.label-caps, .eyebrow {
+.label-caps,
+.eyebrow {
   font-family: var(--font-sans);
   font-size: var(--t-mono);
   font-weight: var(--w-semibold);
@@ -307,10 +323,13 @@ p, .p {
   color: var(--fg-muted);
 }
 
-.mono, code, kbd, samp {
+.mono,
+code,
+kbd,
+samp {
   font-family: var(--font-mono);
   font-size: 0.94em;
-  font-feature-settings: "zero", "ss02";
+  font-feature-settings: 'zero', 'ss02';
 }
 
 .mono-tag {
@@ -329,10 +348,14 @@ a {
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   text-decoration-color: var(--rule-strong);
-  transition: text-decoration-color var(--dur-base) var(--ease-standard),
-              color var(--dur-base) var(--ease-standard);
+  transition:
+    text-decoration-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
 }
-a:hover { text-decoration-color: var(--accent); color: var(--accent); }
+a:hover {
+  text-decoration-color: var(--accent);
+  color: var(--accent);
+}
 
 /* Focus ring — always visible, never removed. Accessibility is firm. */
 *:focus-visible {
