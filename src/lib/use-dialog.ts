@@ -39,7 +39,13 @@ const FOCUSABLE_SELECTOR = [
   '[contenteditable]:not([contenteditable="false"])',
 ].join(',');
 
-function focusableWithin(el: HTMLElement): HTMLElement[] {
+/**
+ * Return the focusable descendants of `el` in DOM order, matching the
+ * browser's actual Tab sequence. Exported for direct unit testing of
+ * the filter rules (visibility, tabindex=-1 exclusion) — the focus
+ * trap's correctness depends on this matching native Tab behavior.
+ */
+export function focusableWithin(el: HTMLElement): HTMLElement[] {
   return Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((n) => {
     // Element must be visible to be a real tab stop. `offsetParent === null`
     // catches `display:none` ancestors; the extra check handles `position:fixed`
