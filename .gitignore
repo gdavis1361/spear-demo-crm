@@ -27,3 +27,4 @@ sbom.cdx.json
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+.claude/
