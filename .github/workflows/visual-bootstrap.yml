@@ -13,6 +13,11 @@ on:
         description: 'Why are we re-baselining? (links to design ticket / PR if any)'
         required: true
         type: string
+      target_ref:
+        description: 'Branch/ref to checkout and re-baseline against. Defaults to main.'
+        required: false
+        type: string
+        default: main
 
 permissions:
   contents: write
@@ -29,6 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.target_ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -58,13 +64,14 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           branch: chore/rebaseline-visual-${{ github.run_id }}
-          base: main
+          base: ${{ inputs.target_ref }}
           commit-message: 'chore(tests): regenerate visual baselines on Linux'
-          title: 'chore(tests): regenerate visual baselines'
+          title: 'chore(tests): regenerate visual baselines (${{ inputs.target_ref }})'
           body: |
             Refreshed via the `visual-bootstrap` workflow.
 
             **Reason:** ${{ inputs.reason }}
+            **Target ref:** `${{ inputs.target_ref }}`
 
             Reviewer: open the PR's *Files changed* tab and inspect each
             `tests/visual/**/*-snapshots/*-linux.png` against the previous
