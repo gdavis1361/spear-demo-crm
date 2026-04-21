@@ -79,12 +79,15 @@ jobs:
           cache: npm
 
       # Cache Playwright browser binaries — cuts ~30s off every job.
+      # Key is suffixed with `-all` because this job needs chromium/firefox/webkit;
+      # the visual-bootstrap workflow uses a `-chromium` cache so the two don't
+      # collide (a partial cache from bootstrap would leave firefox/webkit missing).
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-all-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci
       - name: Install Playwright browsers (only if cache missed)
@@ -120,7 +123,7 @@ jobs:
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
