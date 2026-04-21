@@ -290,7 +290,8 @@ export async function run(
   const t0 =
     typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
-      : Date.now();
+      : // eslint-disable-next-line no-restricted-syntax -- wall-clock fallback for elapsed-ms telemetry only. Not persisted, not replayed — `t0` only feeds `workflow.completed.ms`. Runner's event timestamps use `ctx.now ?? nowInstant()`, which is what the T10 rule protects.
+        Date.now();
   const stream = workflowRunStream(def.id, ctx.runId);
   const result = (await startSpan(
     {
@@ -321,7 +322,8 @@ export async function run(
   const t1 =
     typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
-      : Date.now();
+      : // eslint-disable-next-line no-restricted-syntax -- same as t0 above: elapsed-ms telemetry only, never replayed.
+        Date.now();
   // Any step that failed pushes its trace with `outcome: 'failed'`; the
   // run as a whole counts as failed for the SLI when that happens, even
   // if `disposition` is a routing state like 'dropped' or 'queued'.
@@ -428,11 +430,21 @@ async function runReentrant(
         .filter((e) => e.kind === 'workflow.wait_resumed')
         .map((e) => (e.kind === 'workflow.wait_resumed' ? e.stepIdx : -1))
     );
+    const runVersion = readRunVersion(runEvents, def);
     if (resumedIdxs.has(lastArmed.stepIdx)) {
       // Paused at a later point? Re-run from lastArmed.stepIdx+1.
       // Uncommon: happens if a prior resume was interrupted after
       // writing wait_resumed but before writing subsequent events.
-      return await continueFrom(def, ctx, log, stream, existing, lastArmed.stepIdx + 1, null);
+      return await continueFrom(
+        def,
+        ctx,
+        log,
+        stream,
+        existing,
+        lastArmed.stepIdx + 1,
+        null,
+        runVersion
+      );
     }
 
     // Tail wait_armed unresumed. Fire only if the timer has elapsed.
@@ -450,14 +462,19 @@ async function runReentrant(
       stream,
       existing,
       lastArmed.stepIdx + 1,
-      lastArmed.stepIdx
+      lastArmed.stepIdx,
+      runVersion
     );
   }
 
   // (a) Fresh start — gate the first write on "stream is empty". Losing
   // the race means another starter committed first; fall through to a
   // read-and-replay path so the caller gets the winner's result shape.
-  const planned = await planSteps(def, ctx, 0, { emitStarted: true, resumedFromIdx: null });
+  const planned = await planSteps(def, ctx, 0, {
+    emitStarted: true,
+    resumedFromIdx: null,
+    runVersion: def.version,
+  });
   const inputs = planned.events.map((payload, i) => ({
     opKey: `${ctx.runId}:${i}`,
     payload,
@@ -483,11 +500,13 @@ async function continueFrom(
   stream: ReturnType<typeof workflowRunStream>,
   existing: readonly StoredEvent[],
   startAt: number,
-  resumedFromIdx: number | null
+  resumedFromIdx: number | null,
+  runVersion: number
 ): Promise<RunResult> {
   const planned = await planSteps(def, ctx, startAt, {
     emitStarted: false,
     resumedFromIdx,
+    runVersion,
   });
   if (planned.events.length === 0) {
     return replay(def, existing) ?? synthesizeFallback(def, ctx);
@@ -500,6 +519,15 @@ async function continueFrom(
   await log.append(stream, inputs);
   const after = await log.read(stream);
   return replay(def, after) ?? synthesizeFallback(def, ctx);
+}
+
+// Pull the `version` off of the original `run_started` event so resumes
+// pin to the version the run was started on, not the current def.version
+// (T8). Falls back to def.version if the event is missing (shouldn't
+// happen in practice).
+function readRunVersion(runEvents: readonly WorkflowRunEvent[], def: WorkflowDefinition): number {
+  const started = runEvents.find((e) => e.kind === 'workflow.run_started');
+  return started && started.kind === 'workflow.run_started' ? started.version : def.version;
 }
 
 // Fallback when an unexpected append error prevents a normal replay. The
@@ -521,11 +549,22 @@ function synthesizeFallback(def: WorkflowDefinition, ctx: RunContext): RunResult
 // to storage — returns the event sequence the caller then writes. Emits
 // `run_started` only if `emitStarted` (fresh-start path); emits
 // `wait_resumed` at the head if `resumedFromIdx` is set (resume path).
+//
+// `runVersion` gates T8's step filter: steps whose `introducedAt`
+// exceeds `runVersion` are skipped silently (no event, no trace entry),
+// matching Temporal's `workflow.patched()` contract. A fresh start
+// always passes `runVersion = def.version`; a resume reads it from the
+// original `workflow.run_started` so new steps added after the run
+// began don't retroactively alter its execution.
 async function planSteps(
   def: WorkflowDefinition,
   ctx: RunContext,
   startAt: number,
-  opts: { emitStarted: boolean; resumedFromIdx: number | null }
+  opts: {
+    emitStarted: boolean;
+    resumedFromIdx: number | null;
+    runVersion: number;
+  }
 ): Promise<{ events: WorkflowRunEvent[] }> {
   const nowFn = ctx.now ?? nowInstant;
   const events: WorkflowRunEvent[] = [];
@@ -553,6 +592,12 @@ async function planSteps(
 
   stepLoop: for (let i = startAt; i < def.steps.length; i++) {
     const step = def.steps[i];
+
+    // T8: skip steps newer than the run's pinned version. `introducedAt`
+    // absent ↔ step has existed since version 1 (pre-T8 definitions).
+    if (step.introducedAt !== undefined && step.introducedAt > opts.runVersion) {
+      continue;
+    }
 
     if (step.kind === 'action') {
       const activity = ctx.activities?.[step.verb];

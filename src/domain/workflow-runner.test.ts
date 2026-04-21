@@ -520,3 +520,108 @@ describe('deterministicRunId (T6)', () => {
     _resetNowForTests();
   });
 });
+
+// T8 — `introducedAt` protects in-flight runs across deploys. A run
+// pinned to v1 at its `workflow.run_started` event resumes against a
+// later v2 def without executing steps added in v2. Mirrors Temporal's
+// `workflow.patched()` discipline: the deploy that adds the step cannot
+// retroactively alter the execution of runs that were mid-flight at the
+// moment the new binary went live.
+describe('run() version gating via introducedAt (T8)', () => {
+  it('skips steps whose introducedAt > runVersion on a resumed run', async () => {
+    const log = new InMemoryEventLog();
+    const v1: WorkflowDefinition = {
+      id: 'wf-pin',
+      name: 't',
+      version: 1,
+      description: '',
+      retry: DEFAULT_RETRY,
+      steps: [
+        { kind: 'trigger', source: 'manual', label: 'go' },
+        { kind: 'wait', label: 'w', durationMs: 60_000 },
+        { kind: 'end', label: 'done', disposition: 'queued' },
+      ],
+    };
+    _setNowForTests(() => instant('2026-04-21T12:00:00Z'));
+    const first = await run(v1, { input: {}, runId: 'r_pin' }, log);
+    expect(first.disposition).toBe('waiting');
+
+    // v2 def inserts a new action step before end, tagged introducedAt=2.
+    // A fresh v2 run executes it; our pinned v1 run must NOT.
+    const v2Calls = { count: 0 };
+    const v2: WorkflowDefinition = {
+      id: 'wf-pin',
+      name: 't',
+      version: 2,
+      description: '',
+      retry: DEFAULT_RETRY,
+      steps: [
+        { kind: 'trigger', source: 'manual', label: 'go' },
+        { kind: 'wait', label: 'w', durationMs: 60_000 },
+        {
+          kind: 'action',
+          label: 'v2-only',
+          verb: 'email',
+          template: 'v2',
+          introducedAt: 2,
+        },
+        { kind: 'end', label: 'done', disposition: 'queued' },
+      ],
+    };
+
+    _setNowForTests(() => instant('2026-04-21T12:02:00Z'));
+    const resumed = await run(
+      v2,
+      {
+        input: {},
+        runId: 'r_pin',
+        sleep: async () => undefined,
+        activities: {
+          email: async () => {
+            v2Calls.count++;
+          },
+        },
+      },
+      log
+    );
+
+    expect(resumed.disposition).toBe('queued');
+    // The v2-only email activity MUST NOT fire on the v1-pinned run.
+    expect(v2Calls.count).toBe(0);
+    _resetNowForTests();
+  });
+
+  it('runs the step normally when introducedAt <= runVersion', async () => {
+    const log = new InMemoryEventLog();
+    const calls: string[] = [];
+    const def: WorkflowDefinition = {
+      id: 'wf-v2',
+      name: 't',
+      version: 2,
+      description: '',
+      retry: DEFAULT_RETRY,
+      steps: [
+        { kind: 'trigger', source: 'manual', label: 'go' },
+        { kind: 'action', label: 'a', verb: 'email', template: 't', introducedAt: 2 },
+        { kind: 'end', label: 'done', disposition: 'queued' },
+      ],
+    };
+    const r = await run(
+      def,
+      {
+        input: {},
+        runId: 'r_v2_fresh',
+        sleep: async () => undefined,
+        activities: {
+          email: async () => {
+            calls.push('email');
+          },
+        },
+      },
+      log
+    );
+    expect(r.disposition).toBe('queued');
+    // Fresh v2 run → introducedAt=2 <= runVersion=2 → step runs.
+    expect(calls).toEqual(['email']);
+  });
+});

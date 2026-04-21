@@ -37,12 +37,34 @@ export type EndDisposition = 'queued' | 'dropped' | 'handed-off' | 'escalated';
  */
 export type Disposition = EndDisposition | 'failed';
 
-export type WorkflowStep =
-  | { kind: 'trigger'; source: EventSource; label: string }
-  | { kind: 'filter'; label: string; predicate: string; expected: string }
-  | { kind: 'action'; label: string; verb: ActionVerb; template: string }
-  | { kind: 'wait'; label: string; durationMs: number; resumeOn?: readonly string[] }
-  | { kind: 'end'; label: string; disposition: EndDisposition };
+/**
+ * Mixin fields present on every step variant. Extracted so T8's version
+ * gate + any future per-step metadata land once, not five times.
+ */
+export interface StepVersioning {
+  /**
+   * T8 — first `def.version` in which this step existed. A step with
+   * `introducedAt > runVersion` is skipped on an in-flight run pinned
+   * to an older version. Mirrors Temporal's `workflow.patched()`
+   * discipline: the deploy that adds a new step for v2 cannot retro-
+   * actively change the trace of v1 runs that were mid-execution at
+   * the moment the new binary went live.
+   *
+   * Absent → equivalent to `introducedAt = 1` (step has existed since
+   * version 1), which matches the pre-T8 behaviour for every existing
+   * workflow definition.
+   */
+  readonly introducedAt?: number;
+}
+
+export type WorkflowStep = StepVersioning &
+  (
+    | { kind: 'trigger'; source: EventSource; label: string }
+    | { kind: 'filter'; label: string; predicate: string; expected: string }
+    | { kind: 'action'; label: string; verb: ActionVerb; template: string }
+    | { kind: 'wait'; label: string; durationMs: number; resumeOn?: readonly string[] }
+    | { kind: 'end'; label: string; disposition: EndDisposition }
+  );
 
 export interface WorkflowDefinition {
   readonly id: string;

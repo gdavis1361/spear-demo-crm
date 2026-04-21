@@ -77,4 +77,46 @@ export default tseslint.config(
       '@eslint-community/eslint-comments/no-unused-disable': 'warn',
     },
   },
+  // T10 — clock-access guard in the workflow runtime.
+  //
+  // Temporal's core determinism contract: replay(history) must produce
+  // byte-identical writes. The moment a step reads `Date.now()` or
+  // `new Date()` directly instead of `ctx.now()`, replay diverges —
+  // two replays of the same history write different `at:` timestamps,
+  // event indexing drifts, and the outbox's opKey dedup silently
+  // papers over the inconsistency.
+  //
+  // The runner itself threads `ctx.now ?? nowInstant()` through every
+  // internal function. The risk is FUTURE drift: an activity or new
+  // step helper that reaches for the system clock directly. This rule
+  // surfaces those at `--max-warnings=0` CI so the drift can't land
+  // silently. Targeted glob: workflow-runner, workflow-def,
+  // workflow-activities + their tests' production edges.
+  //
+  // Tests and storage-layer code (outbox's stale sweep, vacuum runner,
+  // schedule registry) legitimately need wall-clock access and are
+  // outside this override.
+  {
+    files: [
+      'src/domain/workflow-runner.ts',
+      'src/domain/workflow-def.ts',
+      'src/domain/workflow-activities.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector:
+            "CallExpression[callee.object.name='Date'][callee.property.name='now']",
+          message:
+            "Use `ctx.now?.() ?? nowInstant()` — Date.now() bypasses the runner's injectable clock and breaks replay determinism (T10).",
+        },
+        {
+          selector: "NewExpression[callee.name='Date'][arguments.length=0]",
+          message:
+            'Use `nowInstant()` — `new Date()` reads the wall clock directly and breaks replay determinism (T10).',
+        },
+      ],
+    },
+  },
 );
