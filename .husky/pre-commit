@@ -1,0 +1,2 @@
+npx --no-install lint-staged 2>/dev/null || true
+npm run lint --silent

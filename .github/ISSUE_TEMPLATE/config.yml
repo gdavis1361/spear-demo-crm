@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/spear/spear-demo-crm/security/advisories/new
+    about: Privately report a security issue. Do NOT use a public issue.
+  - name: Discussions
+    url: https://github.com/spear/spear-demo-crm/discussions
+    about: Architecture questions, "show and tell", general Q&A.

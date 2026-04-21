@@ -1,0 +1,40 @@
+# CODEOWNERS — auto-requested reviewers per path.
+# Order matters: the LAST matching pattern wins.
+# Replace placeholders with real GitHub teams or handles.
+
+# Default reviewer for anything unowned
+*                                @spear/maintainers
+
+# Frontend surfaces
+/src/components/                 @spear/frontend
+/src/screens/                    @spear/frontend
+/src/styles/                     @spear/frontend
+
+# Typed primitives + API boundary
+/src/lib/                        @spear/platform
+/src/api/                        @spear/platform
+
+# Durable layer + ontology — extra eyes on these
+/src/domain/                     @spear/platform @spear/ontology
+/src/ontology/                   @spear/ontology
+
+# App runtime + telemetry
+/src/app/                        @spear/platform
+
+# Tests
+/tests/                          @spear/qa
+/src/**/*.test.ts                @spear/qa
+
+# Build + repo plumbing
+/.github/                        @spear/devex
+/.devcontainer/                  @spear/devex
+/vite.config.ts                  @spear/devex
+/vitest.config.ts                @spear/devex @spear/qa
+/playwright.config.ts            @spear/devex @spear/qa
+/tsconfig*.json                  @spear/platform
+/package.json                    @spear/devex
+/package-lock.json               @spear/devex
+
+# Security / ops
+/SECURITY.md                     @spear/security
+/.github/workflows/codeql.yml    @spear/security

@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    labels: ["kind:chore", "deps"]
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # Group safe updates so we don't drown in PRs.
+      typescript:
+        patterns: ["typescript", "@types/*", "typescript-eslint"]
+      lint-format:
+        patterns: ["eslint", "eslint-*", "@eslint/*", "prettier"]
+      test:
+        patterns: ["vitest", "@vitest/*", "@playwright/*", "happy-dom", "fake-indexeddb"]
+      react:
+        patterns: ["react", "react-dom"]
+      build:
+        patterns: ["vite", "@vitejs/*"]
+      ontology:
+        patterns: ["zod"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    labels: ["kind:chore", "deps"]
+    commit-message:
+      prefix: chore
+      include: scope

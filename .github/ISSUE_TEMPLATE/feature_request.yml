@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new capability or surface.
+title: "feat: "
+labels: ["kind:feature", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Lead with the rep / AE / manager problem in plain prose. Avoid prescribing the solution before stating the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: One paragraph. Reference the relevant ontology object types, action types, or screens.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where this lives
+      options:
+        - new screen
+        - new ontology object type
+        - new ontology action
+        - new workflow
+        - extends an existing surface
+        - infrastructure / build / docs
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: How will we know it worked?
+      description: Concrete success metric or qualitative bar.

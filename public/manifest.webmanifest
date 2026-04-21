@@ -1,0 +1,12 @@
+{
+  "name": "Spear CRM",
+  "short_name": "Spear",
+  "description": "The CRM rebuilt for how moves actually work.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#1a1a1a",
+  "icons": [
+    { "src": "/assets/logo-spear-mark-dark.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

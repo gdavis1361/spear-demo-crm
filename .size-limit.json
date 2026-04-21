@@ -1,0 +1,20 @@
+[
+  {
+    "name": "initial JS (entry chunk)",
+    "path": "dist/assets/index-*.js",
+    "limit": "80 KB",
+    "gzip": true
+  },
+  {
+    "name": "CSS",
+    "path": "dist/assets/index-*.css",
+    "limit": "40 KB",
+    "gzip": true
+  },
+  {
+    "name": "largest lazy chunk",
+    "path": "dist/assets/account-quote-workflows-*.js",
+    "limit": "12 KB",
+    "gzip": true
+  }
+]

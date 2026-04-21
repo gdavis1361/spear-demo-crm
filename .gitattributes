@@ -1,0 +1,17 @@
+* text=auto eol=lf
+
+# Generated content — exclude from line-ending churn + collapse in PR diffs.
+package-lock.json -diff linguist-generated=true
+*.svg -diff
+*.woff2 -diff binary
+*.ttf -diff binary
+
+# Force LF on text files even on Windows checkouts.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
