@@ -12,8 +12,7 @@ import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
 import { WORKFLOWS, PCS_CYCLE_OUTREACH } from '../domain/workflow-def';
 import { installVacuumRunner, type VacuumRunner } from '../domain/vacuum-runner';
 import { recordVacuumOutcome } from '../domain/stats';
-import { instant } from '../lib/time';
-import { repId } from '../lib/ids';
+import { runScenario, scenarioName } from '../seeds';
 
 export const promiseStore = new PromiseStore(eventLog);
 export const scheduleRegistry = new ScheduleRegistry(eventLog);
@@ -64,7 +63,14 @@ export async function bootRuntime(): Promise<void> {
   booted = true;
 
   await promiseStore.ready;
-  await seedFixturesIfEmpty();
+  // Canonical seed. `runInvariants: false` because a user's local state may
+  // have drifted (old build, deleted promise, vacuum) — in that case the
+  // scenario's build short-circuits but the invariant would still throw
+  // and take down bootRuntime. Invariants are a test/CLI concern, not a
+  // boot-time concern.
+  await runScenario(eventLog, { promiseStore }, scenarioName('canonical'), {
+    runInvariants: false,
+  });
   installPromiseTicker(promiseStore);
   registerSchedules();
 
@@ -80,57 +86,10 @@ export async function bootRuntime(): Promise<void> {
 }
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
-// Seed the promise store with the demo data once. Subsequent loads reuse
-// the persisted state.
-
-function minutesFromNow(min: number): { iso: string } {
-  return instant(new Date(Date.now() + min * 60_000).toISOString());
-}
-
-async function seedFixturesIfEmpty(): Promise<void> {
-  if (promiseStore.list().length > 0) return;
-  const me = repId('rep_mhall');
-  // The five demo promises, hydrated as durable timers. Awaited so the
-  // ticker sees them on its first pass.
-  await promiseStore.create({
-    id: 'pr_alvarez',
-    noun: { kind: 'person', id: 'ssgt-marcus-alvarez' },
-    text: 'Call R. Alvarez — new delivery window',
-    dueAt: minutesFromNow(14), // soon
-    escalateAt: minutesFromNow(45),
-    createdBy: me,
-  });
-  await promiseStore.create({
-    id: 'pr_tle',
-    noun: { kind: 'doc', id: 'mv-30418' },
-    text: 'Send TLE paperwork · MV-30418',
-    dueAt: minutesFromNow(180),
-    escalateAt: minutesFromNow(360),
-    createdBy: me,
-  });
-  await promiseStore.create({
-    id: 'pr_bafo_mels',
-    noun: { kind: 'account', id: 'acc-1188' },
-    text: 'BAFO response to MELS Corporate',
-    dueAt: minutesFromNow(-30), // already overdue → ticker marks missed
-    escalateAt: minutesFromNow(-5),
-    createdBy: me,
-  });
-  await promiseStore.create({
-    id: 'pr_park',
-    noun: { kind: 'person', id: 'cw3-diane-park' },
-    text: 'Follow-up to CW3 Park re: Alaska gap',
-    dueAt: minutesFromNow(60 * 24 * 4),
-    createdBy: me,
-  });
-  await promiseStore.create({
-    id: 'pr_thibault',
-    noun: { kind: 'person', id: 'm-thibault' },
-    text: 'Intro call w/ M. Thibault (Atlas regional)',
-    dueAt: minutesFromNow(60 * 24 * 9),
-    createdBy: me,
-  });
-}
+// The former `seedFixturesIfEmpty()` is now the `canonical` scenario in
+// `src/seeds/scenarios/canonical.ts`. `bootRuntime()` runs it via the
+// runner, which emits `seed.started` / `seed.completed` telemetry + is
+// testable + composable with future layered scenarios.
 
 // ─── Schedules ─────────────────────────────────────────────────────────────
 // Three live polls register here. The Signals page reads them.

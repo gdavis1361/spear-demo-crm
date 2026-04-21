@@ -77,6 +77,23 @@ export type TrackEvent =
   | {
       name: 'storage.quota_exhausted';
       props: { stream: string; usage: number | null; quota: number | null };
+    }
+  | {
+      name: 'seed.started';
+      props: {
+        scenario: string;
+        rngSeed: number;
+        clockMode: 'relative' | 'frozen';
+        layers: string;
+      };
+    }
+  | {
+      name: 'seed.completed';
+      props: { scenario: string; rngSeed: number; layers: string; elapsedMs: number };
+    }
+  | {
+      name: 'seed.scenario_stale';
+      props: { scenario: string; declaredVersion: number; currentVersion: number };
     };
 
 export type TrackEventName = TrackEvent['name'];
