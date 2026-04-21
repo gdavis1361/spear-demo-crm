@@ -10,6 +10,7 @@ export { runScenario, CURRENT_SCHEMA_VERSION } from './runner';
 export { VirtualClock } from './clock';
 export { Rng } from './rng';
 export { scenarioName } from './types';
+export { detectSeedParam, activateSeedFromUrl, SEED_DB_PREFIX } from './activation';
 export type {
   Scenario,
   ScenarioCtx,
