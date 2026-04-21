@@ -53,6 +53,15 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
+      - name: Fail fast if PROD_URL is unset
+        # Without this the synthetic spec `test.skip`s on missing env and
+        # every run reports green forever, masking a misconfigured repo.
+        run: |
+          if [ -z "${{ vars.PROD_URL }}" ]; then
+            echo "::error::PROD_URL repo variable is not set; see docs/ops/secrets.md"
+            exit 1
+          fi
+
       - name: Probe production
         env:
           SYNTHETIC_BASE_URL: ${{ vars.PROD_URL }}
@@ -81,24 +90,38 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // `status: completed` excludes the current run. We want
+            // "3 consecutive failures counting this one", so check the 2
+            // prior completed runs plus the current (which is failing).
             const { data } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'synthetics.yml',
-              per_page: 4,
+              per_page: 3,
               status: 'completed',
             });
-            const recent = data.workflow_runs.slice(0, 3);
-            const allFailed = recent.length === 3 && recent.every(r => r.conclusion === 'failure');
-            core.setOutput('all_failed', String(allFailed));
-            core.info(`Recent conclusions: ${recent.map(r => r.conclusion).join(', ')}`);
+            const recent = data.workflow_runs.slice(0, 2);
+            const priorBothFailed = recent.length === 2 && recent.every(r => r.conclusion === 'failure');
+            core.setOutput('should_rollback', String(priorBothFailed));
+            core.info(`Prior conclusions: ${recent.map(r => r.conclusion).join(', ')} — this run failed, rollback=${priorBothFailed}`);
 
       - name: Dispatch rollback
-        if: steps.history.outputs.all_failed == 'true'
+        if: steps.history.outputs.should_rollback == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            // Find the most recent successful deploy and trigger a redeploy.
+            // Current tip of main — the broken SHA. The current deploy of
+            // main succeeded at the deploy.yml level (the app broke
+            // post-deploy, which is what synthetics is designed to catch),
+            // so without this filter we would try to "roll back" to the
+            // same broken SHA.
+            const { data: mainBranch } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: 'main',
+            });
+            const brokenSha = mainBranch.commit.sha;
+
             const { data: deploys } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -106,12 +129,14 @@ jobs:
               per_page: 20,
               status: 'success',
             });
-            const previous = deploys.workflow_runs.find(r => r.head_branch === 'main');
+            const previous = deploys.workflow_runs.find(
+              r => r.head_branch === 'main' && r.head_sha !== brokenSha
+            );
             if (!previous) {
-              core.setFailed('No prior successful deploy to roll back to.');
+              core.setFailed(`No prior green deploy available to roll back to (current broken SHA: ${brokenSha}).`);
               return;
             }
-            core.info(`Rolling back to ${previous.head_sha} (from ${previous.html_url})`);
+            core.info(`Rolling back from ${brokenSha} → ${previous.head_sha} (${previous.html_url})`);
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,

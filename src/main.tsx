@@ -5,7 +5,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { installMockApi } from './api/mock-server';
 import { migrateLegacy } from './app/state';
 import { initObservability } from './app/observability';
-import { track } from './app/telemetry';
+import { track, flush as flushTelemetry } from './app/telemetry';
 import '@fontsource/instrument-serif/400.css';
 import '@fontsource/instrument-serif/400-italic.css';
 import '@fontsource/jetbrains-mono/400.css';
@@ -19,45 +19,40 @@ import './styles/nouns.css';
 initObservability();
 
 // Wrap each boot stage so a failure in one emits a structured
-// `app.boot_failed` event instead of a silent blank page.
+// `app.boot_failed` event instead of a silent blank page. We `flushTelemetry`
+// synchronously (via sendBeacon) before re-throwing so the event ships even
+// when the user parks on the error screen — otherwise the 2s flush timer
+// never fires and the SLO numerator is biased toward looking healthier
+// than it is.
+type BootStage = 'migrate_legacy' | 'install_mock' | 'runtime' | 'workflow_runner';
+function bootFailed(stage: BootStage, err: unknown): never {
+  track({ name: 'app.boot_failed', props: { stage, message: (err as Error).message } });
+  flushTelemetry(true);
+  throw err;
+}
+
 try {
   migrateLegacy();
 } catch (err) {
-  track({
-    name: 'app.boot_failed',
-    props: { stage: 'migrate_legacy', message: (err as Error).message },
-  });
-  throw err;
+  bootFailed('migrate_legacy', err);
 }
 
 try {
   installMockApi();
 } catch (err) {
-  track({
-    name: 'app.boot_failed',
-    props: { stage: 'install_mock', message: (err as Error).message },
-  });
-  throw err;
+  bootFailed('install_mock', err);
 }
 
 import('./app/runtime').then(async ({ bootRuntime, startDemoWorkflowRunner }) => {
   try {
     await bootRuntime();
   } catch (err) {
-    track({
-      name: 'app.boot_failed',
-      props: { stage: 'runtime', message: (err as Error).message },
-    });
-    throw err;
+    bootFailed('runtime', err);
   }
   try {
     startDemoWorkflowRunner();
   } catch (err) {
-    track({
-      name: 'app.boot_failed',
-      props: { stage: 'workflow_runner', message: (err as Error).message },
-    });
-    throw err;
+    bootFailed('workflow_runner', err);
   }
 });
 
