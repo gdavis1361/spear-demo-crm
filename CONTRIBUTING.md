@@ -105,15 +105,7 @@ Configure on `main` after pushing the repo:
 
 ## After the repo is pushed
 
-Replace the `OWNER/REPO` placeholders that survive across the codebase. Search-and-replace the literal strings `OWNER/REPO` and `@OWNER/`. Files that contain them today:
-
-- `README.md` — badges + Codespaces link
-- `package.json` — `homepage`, `repository.url`, `bugs.url`
-- `.github/CODEOWNERS` — uncomment the lines once real teams exist
-- `.github/ISSUE_TEMPLATE/config.yml` — security advisory + Discussions URLs
-- `mkdocs.yml` — `site_url`, `repo_url`
-
-After replacement, push, then enable the branch-protection rules above.
+Replaced as of the initial `gdavis1361/spear-demo-crm` push. If the repo is ever forked or renamed, search-and-replace the literals `gdavis1361/spear-demo-crm` and re-visit `.github/CODEOWNERS` (currently all paths route to `@gdavis1361`; swap to `@org/team` patterns once teams exist).
 
 ## Reporting bugs / requesting features
 

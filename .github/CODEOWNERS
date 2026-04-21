@@ -1,45 +1,43 @@
 # CODEOWNERS — auto-requested reviewers per path.
 # Order matters: the LAST matching pattern wins.
 #
-# TODO(repo-org): replace `@OWNER/<team>` placeholders with real GitHub teams
-# once the repo is pushed and teams are created. Until then every line below
-# is commented out — *no* review is auto-requested. Once teams exist, uncomment
-# and ensure the Branch Protection rule on `main` has "Require review from
-# Code Owners" enabled.
+# Personal repo (no GitHub teams). Every change auto-requests review from
+# the repo owner. When the project graduates to an org with teams, replace
+# `@gdavis1361` with `@org/team` per area.
 
 # Default reviewer for anything unowned
-# *                                @OWNER/maintainers
+*                                @gdavis1361
 
 # Frontend surfaces
-# /src/components/                 @OWNER/frontend
-# /src/screens/                    @OWNER/frontend
-# /src/styles/                     @OWNER/frontend
+/src/components/                 @gdavis1361
+/src/screens/                    @gdavis1361
+/src/styles/                     @gdavis1361
 
 # Typed primitives + API boundary
-# /src/lib/                        @OWNER/platform
-# /src/api/                        @OWNER/platform
+/src/lib/                        @gdavis1361
+/src/api/                        @gdavis1361
 
 # Durable layer + ontology — extra eyes on these
-# /src/domain/                     @OWNER/platform @OWNER/ontology
-# /src/ontology/                   @OWNER/ontology
+/src/domain/                     @gdavis1361
+/src/ontology/                   @gdavis1361
 
 # App runtime + telemetry
-# /src/app/                        @OWNER/platform
+/src/app/                        @gdavis1361
 
 # Tests
-# /tests/                          @OWNER/qa
-# /src/**/*.test.ts                @OWNER/qa
+/tests/                          @gdavis1361
+/src/**/*.test.ts                @gdavis1361
 
 # Build + repo plumbing
-# /.github/                        @OWNER/devex
-# /.devcontainer/                  @OWNER/devex
-# /vite.config.ts                  @OWNER/devex
-# /vitest.config.ts                @OWNER/devex @OWNER/qa
-# /playwright.config.ts            @OWNER/devex @OWNER/qa
-# /tsconfig*.json                  @OWNER/platform
-# /package.json                    @OWNER/devex
-# /package-lock.json               @OWNER/devex
+/.github/                        @gdavis1361
+/.devcontainer/                  @gdavis1361
+/vite.config.ts                  @gdavis1361
+/vitest.config.ts                @gdavis1361
+/playwright.config.ts            @gdavis1361
+/tsconfig*.json                  @gdavis1361
+/package.json                    @gdavis1361
+/package-lock.json               @gdavis1361
 
 # Security / ops
-# /SECURITY.md                     @OWNER/security
-# /.github/workflows/codeql.yml    @OWNER/security
+/SECURITY.md                     @gdavis1361
+/.github/workflows/codeql.yml    @gdavis1361

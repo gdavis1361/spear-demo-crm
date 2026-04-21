@@ -1,7 +1,7 @@
 site_name: Spear CRM
 site_description: A CRM rebuilt around how moves actually work.
-site_url: https://OWNER.github.io/REPO/ # TODO(repo-url)
-repo_url: https://github.com/OWNER/REPO # TODO(repo-url)
+site_url: https://gdavis1361.github.io/spear-demo-crm/
+repo_url: https://github.com/gdavis1361/spear-demo-crm
 edit_uri: edit/main/docs/
 
 docs_dir: docs

@@ -1,12 +1,8 @@
 # Spear CRM
 
-<!-- TODO(repo-url): replace `OWNER/REPO` everywhere in this file once the repo is pushed.
-     The list of placeholder URLs to swap is in CONTRIBUTING.md → "After the repo is pushed".
--->
-
-[![ci](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-[![codeql](https://github.com/OWNER/REPO/actions/workflows/codeql.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/OWNER/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/OWNER/REPO)
+[![ci](https://github.com/gdavis1361/spear-demo-crm/actions/workflows/ci.yml/badge.svg)](https://github.com/gdavis1361/spear-demo-crm/actions/workflows/ci.yml)
+[![codeql](https://github.com/gdavis1361/spear-demo-crm/actions/workflows/codeql.yml/badge.svg)](https://github.com/gdavis1361/spear-demo-crm/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/gdavis1361/spear-demo-crm/branch/main/graph/badge.svg)](https://codecov.io/gh/gdavis1361/spear-demo-crm)
 [![bundle](https://img.shields.io/badge/initial%20JS-%E2%89%A480%20KB%20gzipped-brightgreen)](.size-limit.json)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node: 22.14](https://img.shields.io/badge/node-22.14-blue.svg)](.nvmrc)
@@ -34,7 +30,7 @@ npm ci             # uses the lockfile
 npm run dev        # → http://localhost:5173
 ```
 
-Or open in [GitHub Codespaces](https://codespaces.new/OWNER/REPO) <!-- TODO(repo-url) --> — the `.devcontainer/` ships a ready-to-go TypeScript/Node image with Playwright preinstalled.
+Or open in [GitHub Codespaces](https://codespaces.new/gdavis1361/spear-demo-crm) — the `.devcontainer/` ships a ready-to-go TypeScript/Node image with Playwright preinstalled.
 
 ## Architecture
 

@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Spear CRM — redesigned for how moves actually work.",
-  "homepage": "https://github.com/OWNER/REPO",
+  "homepage": "https://github.com/gdavis1361/spear-demo-crm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/REPO.git"
+    "url": "git+https://github.com/gdavis1361/spear-demo-crm.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/REPO/issues"
+    "url": "https://github.com/gdavis1361/spear-demo-crm/issues"
   },
   "author": "Spear team",
   "license": "MIT",
