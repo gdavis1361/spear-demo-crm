@@ -4550,3 +4550,49 @@ table.pipe-table td.num {
     border-top: 1px solid var(--rule);
   }
 }
+
+/* ============ Seed-mode banner ============
+   Rendered by <SeedBanner /> when `?seed=<name>` is in the URL. Persistent,
+   non-dismissible, pulls from the amber-800 aviation-panel caution tone so
+   it reads as notice-not-error. AA contrast: paper-0 on amber-800 = 5.9:1. */
+.seed-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: var(--amber-800);
+  color: var(--paper-0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+}
+.seed-banner__label {
+  opacity: 0.8;
+  font-weight: 500;
+}
+.seed-banner__name {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.seed-banner__sep {
+  opacity: 0.5;
+}
+.seed-banner__btn {
+  background: transparent;
+  color: var(--paper-0);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.seed-banner__btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.seed-banner__btn:focus-visible {
+  outline: 2px solid var(--paper-0);
+  outline-offset: 2px;
+}
