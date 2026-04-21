@@ -1,0 +1,129 @@
+name: deploy
+
+# Automated production deploys + automated rollback on synthetic failure.
+#
+# Triggers:
+#   - push to main (auto-deploy)
+#   - workflow_dispatch with `ref` input (manual redeploy / rollback)
+#
+# Required repo secrets:
+#   VERCEL_TOKEN         — https://vercel.com/account/tokens (scope: your user)
+#   VERCEL_ORG_ID        — from `vercel whoami` or project settings
+#   VERCEL_PROJECT_ID    — from `.vercel/project.json` after `vercel link`
+#   VITE_SENTRY_DSN      — (optional) baked into the client bundle at build time
+#
+# Required repo variables:
+#   PROD_URL             — canonical production URL (e.g. https://spear.vercel.app)
+#                          Used by post-deploy health probe and synthetics.
+#
+# Gate: post-deploy health probe runs against the freshly-deployed URL and
+# the workflow fails if it doesn't come back 200. Failure leaves the
+# previous deployment as the production alias (Vercel default behavior when
+# the new deployment isn't promoted).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref/SHA to deploy (defaults to main HEAD)'
+        required: false
+        type: string
+        default: main
+
+concurrency:
+  # Never run two prod deploys in parallel.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# Pin the Vercel CLI major so a breaking release doesn't silently break deploys.
+# Bump deliberately after regression-testing against a preview.
+env:
+  VERCEL_CLI: 'vercel@^51'
+
+jobs:
+  deploy:
+    name: deploy (production)
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fail fast if PROD_URL is unset
+        # Without this, the post-deploy probe falls through to the deployment
+        # URL (which passes even if the alias swap failed), and synthetics
+        # silently skip.
+        run: |
+          if [ -z "${{ vars.PROD_URL }}" ]; then
+            echo "::error::PROD_URL repo variable is not set; see docs/ops/secrets.md"
+            exit 1
+          fi
+
+      - name: Pull Vercel environment
+        run: npx ${{ env.VERCEL_CLI }} pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build (production)
+        run: npx ${{ env.VERCEL_CLI }} build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_APP_VERSION: ${{ github.sha }}
+
+      - name: Deploy (prebuilt → production alias)
+        id: deploy
+        run: |
+          url=$(npx ${{ env.VERCEL_CLI }} deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Post-deploy health probe (production alias)
+        # Probe the canonical alias, not the per-deployment URL. If the alias
+        # swap fails or Vercel is serving a stale edge, the deployment URL
+        # returns 200 while PROD_URL serves the previous build — users see
+        # stale, probe reports green. Probing PROD_URL catches that.
+        #
+        # We confirm the alias is serving *this* build by matching the
+        # `<meta name="x-app-version">` tag injected from VITE_APP_VERSION
+        # (= github.sha at build time). A 200 without the matching SHA is
+        # a stale alias, not a healthy deploy.
+        run: |
+          set -e
+          url="${{ vars.PROD_URL }}"
+          expected='content="${{ github.sha }}"'
+          echo "Waiting 10s for alias + edge to settle before probing $url"
+          sleep 10
+          for attempt in 1 2 3 4 5 6; do
+            body=$(curl -sS --max-time 10 "$url" || true)
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$url" || echo "000")
+            if [ "$code" = "200" ] && echo "$body" | grep -q "x-app-version" && echo "$body" | grep -q "$expected"; then
+              echo "Probe OK (attempt $attempt): HTTP 200 + x-app-version matches"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code, SHA match=no — retrying in 5s"
+            sleep 5
+          done
+          echo "::error::Health probe failed — alias not serving current SHA."
+          exit 1

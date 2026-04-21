@@ -1,0 +1,146 @@
+name: synthetics
+
+# Scheduled external probe of production. Exercises the same core flows as
+# the smoke suite (landing paint, keyboard nav, Cmd+K palette) against the
+# public URL. On 3 consecutive failures, dispatches the `deploy` workflow
+# with the previous green SHA as input to roll back.
+#
+# Required repo variables:
+#   PROD_URL             — canonical production URL
+#
+# Required repo secrets:
+#   (inherits GITHUB_TOKEN for cross-workflow dispatch)
+
+on:
+  schedule:
+    # Every 5 minutes. Cron windows on GitHub-hosted runners can slip by
+    # a few minutes under load — budget accordingly when setting SLOs.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # needed to dispatch deploy workflow on rollback
+
+concurrency:
+  group: synthetics
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: synthetic smoke (production)
+    runs-on: ubuntu-latest
+    outputs:
+      conclusion: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Fail fast if PROD_URL is unset
+        # Without this the synthetic spec `test.skip`s on missing env and
+        # every run reports green forever, masking a misconfigured repo.
+        run: |
+          if [ -z "${{ vars.PROD_URL }}" ]; then
+            echo "::error::PROD_URL repo variable is not set; see docs/ops/secrets.md"
+            exit 1
+          fi
+
+      - name: Probe production
+        env:
+          SYNTHETIC_BASE_URL: ${{ vars.PROD_URL }}
+        run: npx playwright test --project=chromium-synthetic tests/synthetic.spec.ts
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-${{ github.run_id }}
+          path: |
+            test-results/**
+            playwright-report/**
+          retention-days: 30
+
+  rollback-on-sustained-failure:
+    # Dispatches a redeploy of the most recent tagged release when this run
+    # AND the two prior runs all failed — the "3 consecutive failures" rule.
+    name: rollback if 3 consecutive failures
+    needs: probe
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check recent synthetic history
+        id: history
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // `status: completed` excludes the current run. We want
+            // "3 consecutive failures counting this one", so check the 2
+            // prior completed runs plus the current (which is failing).
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'synthetics.yml',
+              per_page: 3,
+              status: 'completed',
+            });
+            const recent = data.workflow_runs.slice(0, 2);
+            const priorBothFailed = recent.length === 2 && recent.every(r => r.conclusion === 'failure');
+            core.setOutput('should_rollback', String(priorBothFailed));
+            core.info(`Prior conclusions: ${recent.map(r => r.conclusion).join(', ')} — this run failed, rollback=${priorBothFailed}`);
+
+      - name: Dispatch rollback
+        if: steps.history.outputs.should_rollback == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Current tip of main — the broken SHA. The current deploy of
+            // main succeeded at the deploy.yml level (the app broke
+            // post-deploy, which is what synthetics is designed to catch),
+            // so without this filter we would try to "roll back" to the
+            // same broken SHA.
+            const { data: mainBranch } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: 'main',
+            });
+            const brokenSha = mainBranch.commit.sha;
+
+            const { data: deploys } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              per_page: 20,
+              status: 'success',
+            });
+            const previous = deploys.workflow_runs.find(
+              r => r.head_branch === 'main' && r.head_sha !== brokenSha
+            );
+            if (!previous) {
+              core.setFailed(`No prior green deploy available to roll back to (current broken SHA: ${brokenSha}).`);
+              return;
+            }
+            core.info(`Rolling back from ${brokenSha} → ${previous.head_sha} (${previous.html_url})`);
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              ref: 'main',
+              inputs: { ref: previous.head_sha },
+            });

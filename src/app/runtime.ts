@@ -5,7 +5,7 @@
 // `runHistory`) directly. No prop-drilling, no context for these — they
 // outlive React.
 
-import { eventLog } from '../domain/events';
+import { eventLog, reportStorageEstimate } from '../domain/events';
 import { PromiseStore, installPromiseTicker } from '../domain/promises';
 import { ScheduleRegistry } from '../domain/schedules';
 import { run as runWorkflow, type RunResult } from '../domain/workflow-runner';
@@ -36,7 +36,9 @@ class RunHistory {
   subscribe(fn: (snap: ReadonlyMap<string, readonly RunResult[]>) => void): () => void {
     this.subs.add(fn);
     fn(this.byWorkflow);
-    return () => { this.subs.delete(fn); };
+    return () => {
+      this.subs.delete(fn);
+    };
   }
   private emit(): void {
     for (const s of this.subs) s(this.byWorkflow);
@@ -71,6 +73,10 @@ export async function bootRuntime(): Promise<void> {
   vacuumRunner = installVacuumRunner(eventLog);
   // Trigger a first pass on idle-ish so the demo has a recent run on hand.
   void vacuumRunner.runNow().then((r) => recordVacuumOutcome(r.finishedAt, r.totalDeleted));
+
+  // Fire-and-forget quota check. Emits `storage.quota_near` at ≥80% so
+  // operators see pressure before a write hits `quota_exceeded`.
+  void reportStorageEstimate();
 }
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────
@@ -90,7 +96,7 @@ async function seedFixturesIfEmpty(): Promise<void> {
     id: 'pr_alvarez',
     noun: { kind: 'person', id: 'ssgt-marcus-alvarez' },
     text: 'Call R. Alvarez — new delivery window',
-    dueAt: minutesFromNow(14),       // soon
+    dueAt: minutesFromNow(14), // soon
     escalateAt: minutesFromNow(45),
     createdBy: me,
   });
@@ -106,7 +112,7 @@ async function seedFixturesIfEmpty(): Promise<void> {
     id: 'pr_bafo_mels',
     noun: { kind: 'account', id: 'acc-1188' },
     text: 'BAFO response to MELS Corporate',
-    dueAt: minutesFromNow(-30),       // already overdue → ticker marks missed
+    dueAt: minutesFromNow(-30), // already overdue → ticker marks missed
     escalateAt: minutesFromNow(-5),
     createdBy: me,
   });
@@ -132,9 +138,14 @@ async function seedFixturesIfEmpty(): Promise<void> {
 function registerSchedules(): void {
   scheduleRegistry.register({
     name: 'milmove.cycle',
-    intervalMs: 60_000,    // demo cadence
+    intervalMs: 60_000, // demo cadence
     jitterMs: 5_000,
-    retry: { maxAttempts: 3, initialBackoffMs: 1000, backoffMultiplier: 2, nonRetryable: ['permission_denied'] },
+    retry: {
+      maxAttempts: 3,
+      initialBackoffMs: 1000,
+      backoffMultiplier: 2,
+      nonRetryable: ['permission_denied'],
+    },
     run: async (runId, _at) => {
       // Stand-in: real impl polls /milmove/cycles. We pretend to find 0–4 items.
       const items = Math.floor(Math.random() * 5);
@@ -183,7 +194,10 @@ export function startDemoWorkflowRunner(): () => void {
   void fire();
   demoTimer = setInterval(() => void fire(), 30_000);
   return () => {
-    if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+    if (demoTimer) {
+      clearInterval(demoTimer);
+      demoTimer = null;
+    }
   };
 }
 

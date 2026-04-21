@@ -24,6 +24,11 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Spear CRM" />
   <meta name="twitter:description" content="The CRM rebuilt for how moves actually work." />
+
+  <!-- Build marker: deploy workflow probes the alias for this SHA to verify
+       the production alias is serving the build we just shipped. Vite's
+       %VAR% syntax replaces from env at build time. -->
+  <meta name="x-app-version" content="%VITE_APP_VERSION%" />
 </head>
 <body>
   <div id="root"></div>

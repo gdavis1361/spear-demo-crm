@@ -58,11 +58,30 @@ export default defineConfig({
         },
       },
     },
+    // Synthetic probes against production. Uses SYNTHETIC_BASE_URL from the
+    // synthetics workflow; no local webServer — it never runs against dev.
+    {
+      name: 'chromium-synthetic',
+      testMatch: ['synthetic.spec.ts'],
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: undefined,
+      },
+      // Synthetics aren't retried — we *want* a single-run failure to count,
+      // so the "3 consecutive failures" rollback rule is honest.
+      retries: 0,
+    },
   ],
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  // Local dev server only when not running synthetics. Avoid stealing port 5173
+  // when a synthetic run uses `SYNTHETIC_BASE_URL`.
+  ...(process.env.SYNTHETIC_BASE_URL
+    ? {}
+    : {
+        webServer: {
+          command: 'npm run dev',
+          url: 'http://localhost:5173',
+          reuseExistingServer: !process.env.CI,
+          timeout: 60_000,
+        },
+      }),
 });

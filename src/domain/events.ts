@@ -16,10 +16,8 @@
 
 import type { DealId, AccountId, LeadId, SignalId } from '../lib/ids';
 import { ulid, ulidTimestamp } from '../lib/ulid';
-import type {
-  EventEnvelopeT,
-  ValidatedPayload,
-} from './event-schema';
+import { track } from '../app/telemetry';
+import type { EventEnvelopeT, ValidatedPayload } from './event-schema';
 import { validatePayload, validateEnvelope } from './event-schema';
 import type {
   DealEvent as _DealEvent,
@@ -43,11 +41,12 @@ export type {
 
 export type StreamKey = string & { readonly __brand: 'StreamKey' };
 
-export const dealStream         = (id: DealId | LeadId | AccountId) => `deal:${id}` as StreamKey;
-export const accountStream      = (id: AccountId)                    => `account:${id}` as StreamKey;
-export const workflowRunStream  = (wf: string, run: string)          => `workflow:${wf}:run:${run}` as StreamKey;
-export const promiseStream      = (id: string)                       => `promise:${id}` as StreamKey;
-export const scheduleStream     = (name: string)                     => `schedule:${name}` as StreamKey;
+export const dealStream = (id: DealId | LeadId | AccountId) => `deal:${id}` as StreamKey;
+export const accountStream = (id: AccountId) => `account:${id}` as StreamKey;
+export const workflowRunStream = (wf: string, run: string) =>
+  `workflow:${wf}:run:${run}` as StreamKey;
+export const promiseStream = (id: string) => `promise:${id}` as StreamKey;
+export const scheduleStream = (name: string) => `schedule:${name}` as StreamKey;
 
 // ─── Envelope ──────────────────────────────────────────────────────────────
 
@@ -81,7 +80,7 @@ export interface AppendIdempotent {
 }
 export interface AppendErr {
   readonly ok: false;
-  readonly code: 'invalid_payload' | 'optimistic_lock_failure' | 'storage_error';
+  readonly code: 'invalid_payload' | 'optimistic_lock_failure' | 'storage_error' | 'quota_exceeded';
   readonly message: string;
   readonly issues?: readonly string[];
 }
@@ -107,7 +106,7 @@ export interface EventLog {
   appendIf(
     stream: StreamKey,
     events: readonly AppendInput[],
-    expectStillValid: (existing: readonly StoredEvent[]) => boolean,
+    expectStillValid: (existing: readonly StoredEvent[]) => boolean
   ): Promise<AppendResult>;
 
   /**
@@ -124,7 +123,7 @@ export interface EventLog {
     events: readonly AppendInput[],
     sideStore: string,
     row: R,
-    onCommit?: () => void,
+    onCommit?: () => void
   ): Promise<AppendResult>;
 
   /** Read all events on a stream in ULID (= chronological) order. */
@@ -169,7 +168,7 @@ export class InMemoryEventLog implements EventLog {
   async appendIf(
     stream: StreamKey,
     events: readonly AppendInput[],
-    expectStillValid: (existing: readonly StoredEvent[]) => boolean,
+    expectStillValid: (existing: readonly StoredEvent[]) => boolean
   ): Promise<AppendResult> {
     return this.doAppend(stream, events, expectStillValid);
   }
@@ -183,7 +182,7 @@ export class InMemoryEventLog implements EventLog {
     events: readonly AppendInput[],
     sideStore: string,
     row: R,
-    onCommit?: () => void,
+    onCommit?: () => void
   ): Promise<AppendResult> {
     const result = await this.doAppend(stream, events, () => true);
     if (!result.ok) return result;
@@ -201,7 +200,7 @@ export class InMemoryEventLog implements EventLog {
   private async doAppend(
     stream: StreamKey,
     events: readonly AppendInput[],
-    expectStillValid: (existing: readonly StoredEvent[]) => boolean,
+    expectStillValid: (existing: readonly StoredEvent[]) => boolean
   ): Promise<AppendResult> {
     // Validate payloads first — atomic batch.
     const validated: { opKey: string; payload: ValidatedPayload }[] = [];
@@ -220,12 +219,22 @@ export class InMemoryEventLog implements EventLog {
 
     // Idempotency: if any opKey already exists for this stream, treat the
     // whole batch as already-applied and return the matching prior rows.
-    const existingByOpKey = new Map(this.events.filter((e) => e.stream === stream).map((e) => [e.opKey, e]));
+    const existingByOpKey = new Map(
+      this.events.filter((e) => e.stream === stream).map((e) => [e.opKey, e])
+    );
     if (validated.every((v) => existingByOpKey.has(v.opKey))) {
-      return { ok: true, idempotent: true, events: validated.map((v) => existingByOpKey.get(v.opKey)!) };
+      return {
+        ok: true,
+        idempotent: true,
+        events: validated.map((v) => existingByOpKey.get(v.opKey)!),
+      };
     }
     if (validated.some((v) => existingByOpKey.has(v.opKey))) {
-      return { ok: false, code: 'invalid_payload', message: 'partial idempotency conflict in batch' };
+      return {
+        ok: false,
+        code: 'invalid_payload',
+        message: 'partial idempotency conflict in batch',
+      };
     }
 
     // Optimistic check.
@@ -247,7 +256,10 @@ export class InMemoryEventLog implements EventLog {
       this.events.push(s);
       this.opKeys.add(`${stream}:${s.opKey}`);
     }
-    this.notify(stream, stored.map((s) => s.id));
+    this.notify(
+      stream,
+      stored.map((s) => s.id)
+    );
     return { ok: true, events: stored };
   }
 
@@ -259,13 +271,23 @@ export class InMemoryEventLog implements EventLog {
     return this.events.filter((e) => (e.stream as string).startsWith(prefix)).sort(byUlid);
   }
 
-  async size(): Promise<number> { return this.events.length; }
-  async deadLetter(): Promise<readonly DeadLetterRow[]> { return this.dlq; }
-  async clear(): Promise<void> { this.events = []; this.opKeys.clear(); this.dlq = []; }
+  async size(): Promise<number> {
+    return this.events.length;
+  }
+  async deadLetter(): Promise<readonly DeadLetterRow[]> {
+    return this.dlq;
+  }
+  async clear(): Promise<void> {
+    this.events = [];
+    this.opKeys.clear();
+    this.dlq = [];
+  }
 
   subscribe(fn: (m: { stream: StreamKey; ids: readonly string[] }) => void): () => void {
     this.subs.add(fn);
-    return () => { this.subs.delete(fn); };
+    return () => {
+      this.subs.delete(fn);
+    };
   }
   private notify(stream: StreamKey, ids: readonly string[]): void {
     for (const s of this.subs) s({ stream, ids });
@@ -301,9 +323,10 @@ function applyMigrations(db: IDBDatabase, tx: IDBTransaction, oldVersion: number
   if (oldVersion < 2) {
     // v2: add composite + partial indexes, dead-letter store, opKey UNIQUE.
     const store = tx.objectStore(STORE);
-    if (!store.indexNames.contains('stream_id'))    store.createIndex('stream_id',     ['stream', 'id']);
-    if (!store.indexNames.contains('opkey_unique')) store.createIndex('opkey_unique',  ['stream', 'opKey'], { unique: true });
-    if (!store.indexNames.contains('kind'))         store.createIndex('kind',          'payload.kind');
+    if (!store.indexNames.contains('stream_id')) store.createIndex('stream_id', ['stream', 'id']);
+    if (!store.indexNames.contains('opkey_unique'))
+      store.createIndex('opkey_unique', ['stream', 'opKey'], { unique: true });
+    if (!store.indexNames.contains('kind')) store.createIndex('kind', 'payload.kind');
     if (!db.objectStoreNames.contains(STORE_DLQ)) {
       db.createObjectStore(STORE_DLQ, { keyPath: 'id' });
     }
@@ -315,7 +338,7 @@ function applyMigrations(db: IDBDatabase, tx: IDBTransaction, oldVersion: number
     if (!db.objectStoreNames.contains(STORE_PROMISES)) {
       const ps = db.createObjectStore(STORE_PROMISES, { keyPath: 'id' });
       ps.createIndex('status_due', ['status', 'dueAt.iso']);
-      ps.createIndex('due',        'dueAt.iso');
+      ps.createIndex('due', 'dueAt.iso');
     }
   }
   if (oldVersion < 4) {
@@ -351,9 +374,14 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result;
       // If a sibling tab opens with a higher DB_VERSION, close so the
       // upgrade isn't blocked. The next caller re-opens.
-      db.onversionchange = () => { db.close(); dbPromise = null; };
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
       // If the connection drops for any other reason, drop the cache too.
-      db.onclose = () => { dbPromise = null; };
+      db.onclose = () => {
+        dbPromise = null;
+      };
       resolve(db);
     };
     req.onblocked = () => reject(new Error('[idb] open blocked by sibling connection'));
@@ -394,7 +422,7 @@ export class IndexedDbEventLog implements EventLog {
   async appendIf(
     stream: StreamKey,
     events: readonly AppendInput[],
-    expectStillValid: (existing: readonly StoredEvent[]) => boolean,
+    expectStillValid: (existing: readonly StoredEvent[]) => boolean
   ): Promise<AppendResult> {
     return this.doAppend(stream, events, expectStillValid);
   }
@@ -404,7 +432,7 @@ export class IndexedDbEventLog implements EventLog {
     events: readonly AppendInput[],
     sideStore: string,
     row: R,
-    onCommit?: () => void,
+    onCommit?: () => void
   ): Promise<AppendResult> {
     return this.doAppend(stream, events, () => true, { sideStore, row, onCommit });
   }
@@ -413,7 +441,7 @@ export class IndexedDbEventLog implements EventLog {
     stream: StreamKey,
     events: readonly AppendInput[],
     expectStillValid: (existing: readonly StoredEvent[]) => boolean,
-    sideWrite?: { sideStore: string; row: { id: string }; onCommit?: () => void },
+    sideWrite?: { sideStore: string; row: { id: string }; onCommit?: () => void }
   ): Promise<AppendResult> {
     const validated: { opKey: string; payload: ValidatedPayload }[] = [];
     for (const e of events) {
@@ -442,23 +470,39 @@ export class IndexedDbEventLog implements EventLog {
       const cursorReq = idx.openCursor(range);
       cursorReq.onsuccess = () => {
         const cur = cursorReq.result;
-        if (cur) { existing.push(cur.value as StoredEvent); cur.continue(); return; }
+        if (cur) {
+          existing.push(cur.value as StoredEvent);
+          cur.continue();
+          return;
+        }
 
         // Idempotency check first (matches in-memory semantics).
         const existingByOpKey = new Map(existing.map((e) => [e.opKey, e]));
         if (validated.every((v) => existingByOpKey.has(v.opKey))) {
-          resolve({ ok: true, idempotent: true, events: validated.map((v) => existingByOpKey.get(v.opKey)!) });
+          resolve({
+            ok: true,
+            idempotent: true,
+            events: validated.map((v) => existingByOpKey.get(v.opKey)!),
+          });
           tx.abort();
           return;
         }
         if (validated.some((v) => existingByOpKey.has(v.opKey))) {
-          resolve({ ok: false, code: 'invalid_payload', message: 'partial idempotency conflict in batch' });
+          resolve({
+            ok: false,
+            code: 'invalid_payload',
+            message: 'partial idempotency conflict in batch',
+          });
           tx.abort();
           return;
         }
 
         if (!expectStillValid(existing)) {
-          resolve({ ok: false, code: 'optimistic_lock_failure', message: 'state changed since read' });
+          resolve({
+            ok: false,
+            code: 'optimistic_lock_failure',
+            message: 'state changed since read',
+          });
           tx.abort();
           return;
         }
@@ -487,8 +531,21 @@ export class IndexedDbEventLog implements EventLog {
           resolve({ ok: true, events: stored });
         };
         tx.onerror = () => {
-          // UNIQUE violation on opKey lands here — surface it as a duplicate.
-          const code = (tx.error?.name === 'ConstraintError' ? 'invalid_payload' : 'storage_error') as AppendErr['code'];
+          const name = tx.error?.name;
+          let code: AppendErr['code'];
+          if (name === 'ConstraintError') {
+            // UNIQUE violation on opKey — surface as a duplicate.
+            code = 'invalid_payload';
+          } else if (name === 'QuotaExceededError') {
+            // Device-level storage exhausted. Worst silent-failure mode in
+            // a local-first app — emit a telemetry event so operators see
+            // it without waiting for a user to report "my promises stopped
+            // saving."
+            code = 'quota_exceeded';
+            void emitQuotaExhausted(stream);
+          } else {
+            code = 'storage_error';
+          }
           resolve({ ok: false, code, message: tx.error?.message ?? 'storage error' });
         };
       };
@@ -626,6 +683,48 @@ export async function withStreamLock<T>(stream: StreamKey, fn: () => Promise<T>)
 
 export const eventLog: EventLog =
   typeof indexedDB !== 'undefined' ? new IndexedDbEventLog() : new InMemoryEventLog();
+
+// ─── Quota telemetry ───────────────────────────────────────────────────────
+//
+// `reportStorageEstimate()` is called on runtime boot. If we're ≥80% of
+// quota, emit `storage.quota_near` so the operator sees pressure before any
+// write hits `QuotaExceededError`. `emitQuotaExhausted()` is called from the
+// IDB tx error handler when a write actually fails on quota — at that point
+// the user has already lost a write.
+
+const QUOTA_NEAR_THRESHOLD = 0.8;
+
+export async function reportStorageEstimate(): Promise<void> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return;
+  try {
+    const { usage, quota } = await navigator.storage.estimate();
+    if (usage == null || quota == null || quota === 0) return;
+    const percent = usage / quota;
+    if (percent >= QUOTA_NEAR_THRESHOLD) {
+      track({
+        name: 'storage.quota_near',
+        props: { usage, quota, percent: Math.round(percent * 1000) / 1000 },
+      });
+    }
+  } catch {
+    // Estimate is best-effort; never break boot on it.
+  }
+}
+
+async function emitQuotaExhausted(stream: string): Promise<void> {
+  let usage: number | null = null;
+  let quota: number | null = null;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      usage = est.usage ?? null;
+      quota = est.quota ?? null;
+    }
+  } catch {
+    // ignore — estimate is advisory
+  }
+  track({ name: 'storage.quota_exhausted', props: { stream, usage, quota } });
+}
 
 // ─── Determinism helpers (used by replay tests + debug tooling) ────────────
 

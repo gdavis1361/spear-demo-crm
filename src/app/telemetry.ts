@@ -11,25 +11,73 @@ import type { ErrorCode } from '../api/errors';
 // ─── Event catalogue ───────────────────────────────────────────────────────
 
 export type TrackEvent =
-  | { name: 'app.mounted';                 props: { ground: string; density: string } }
-  | { name: 'rail.navigate';               props: { from: Screen; to: Screen; method: 'click' | 'keyboard' } }
-  | { name: 'palette.opened';              props: { trigger: 'keyboard' | 'click' } }
-  | { name: 'palette.selected';            props: { kind: 'verb' | 'noun'; queryLen: number } }
-  | { name: 'peek.opened';                 props: { kind: string; depth: number } }
-  | { name: 'peek.dismissed';              props: { reason: 'escape' | 'backdrop' | 'close' | 'stack_pop' } }
-  | { name: 'pipeline.card_moved';         props: { dealId: string; from: string; to: string; optimistic: boolean } }
-  | { name: 'pipeline.card_moved_confirmed'; props: { dealId: string; from: string; to: string; ms: number; requestId: string } }
-  | { name: 'pipeline.card_moved_failed';  props: { dealId: string; from: string; to: string; ms: number; code: ErrorCode; requestId: string } }
-  | { name: 'honest_draft.inserted';       props: { template: string; wordCount: number; checksPassed: number } }
-  | { name: 'signal.dismissed';            props: { id: string; requestId: string } }
-  | { name: 'signal.actioned';             props: { id: string; requestId: string } }
-  | { name: 'promise.created';             props: { id: string; nounKind: string; minutesToDue: number; hasEscalation: boolean } }
-  | { name: 'promise.kept';                props: { id: string; minutesEarly: number } }
-  | { name: 'promise.missed';              props: { id: string; minutesLate: number } }
-  | { name: 'promise.escalated';           props: { id: string } }
-  | { name: 'promise.store_hydrated';      props: { rows: number; quarantined: number; migratedFromLegacy: number; ms: number } }
-  | { name: 'promise.row_quarantined';     props: { id: string; reason: string } }
-  | { name: 'error.boundary';              props: { message: string; requestId: string } };
+  | { name: 'app.mounted'; props: { ground: string; density: string } }
+  | {
+      name: 'app.boot_failed';
+      props: {
+        stage: 'runtime' | 'migrate_legacy' | 'install_mock' | 'workflow_runner';
+        message: string;
+      };
+    }
+  | { name: 'rail.navigate'; props: { from: Screen; to: Screen; method: 'click' | 'keyboard' } }
+  | { name: 'palette.opened'; props: { trigger: 'keyboard' | 'click' } }
+  | { name: 'palette.selected'; props: { kind: 'verb' | 'noun'; queryLen: number } }
+  | { name: 'peek.opened'; props: { kind: string; depth: number } }
+  | { name: 'peek.dismissed'; props: { reason: 'escape' | 'backdrop' | 'close' | 'stack_pop' } }
+  | {
+      name: 'pipeline.card_moved';
+      props: { dealId: string; from: string; to: string; optimistic: boolean };
+    }
+  | {
+      name: 'pipeline.card_moved_confirmed';
+      props: { dealId: string; from: string; to: string; ms: number; requestId: string };
+    }
+  | {
+      name: 'pipeline.card_moved_failed';
+      props: {
+        dealId: string;
+        from: string;
+        to: string;
+        ms: number;
+        code: ErrorCode;
+        requestId: string;
+      };
+    }
+  | {
+      name: 'honest_draft.inserted';
+      props: { template: string; wordCount: number; checksPassed: number };
+    }
+  | { name: 'signal.dismissed'; props: { id: string; requestId: string } }
+  | { name: 'signal.actioned'; props: { id: string; requestId: string } }
+  | {
+      name: 'promise.created';
+      props: { id: string; nounKind: string; minutesToDue: number; hasEscalation: boolean };
+    }
+  | { name: 'promise.kept'; props: { id: string; minutesEarly: number } }
+  | { name: 'promise.missed'; props: { id: string; minutesLate: number } }
+  | { name: 'promise.escalated'; props: { id: string } }
+  | {
+      name: 'promise.store_hydrated';
+      props: { rows: number; quarantined: number; migratedFromLegacy: number; ms: number };
+    }
+  | { name: 'promise.row_quarantined'; props: { id: string; reason: string } }
+  | { name: 'error.boundary'; props: { message: string; requestId: string } }
+  | {
+      name: 'web_vital';
+      props: {
+        metric: 'LCP' | 'CLS' | 'INP' | 'FCP' | 'TTFB';
+        value: number;
+        rating: 'good' | 'needs-improvement' | 'poor';
+        delta: number;
+        id: string;
+        navigationType: string;
+      };
+    }
+  | { name: 'storage.quota_near'; props: { usage: number; quota: number; percent: number } }
+  | {
+      name: 'storage.quota_exhausted';
+      props: { stream: string; usage: number | null; quota: number | null };
+    };
 
 export type TrackEventName = TrackEvent['name'];
 
@@ -44,7 +92,8 @@ interface EnvelopeEntry {
 }
 
 const RELEASE = '0.1.0';
-const sessionId = (typeof crypto !== 'undefined' && crypto.randomUUID?.()) || `sess_${Date.now().toString(36)}`;
+const sessionId =
+  (typeof crypto !== 'undefined' && crypto.randomUUID?.()) || `sess_${Date.now().toString(36)}`;
 
 const buffer: EnvelopeEntry[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,7 +127,10 @@ function scheduleFlush() {
 }
 
 export function flush(sync = false): void {
-  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   if (buffer.length === 0) return;
   const payload = JSON.stringify({ events: buffer.splice(0, buffer.length) });
 
@@ -101,7 +153,9 @@ export function flush(sync = false): void {
     headers: { 'Content-Type': 'application/json' },
     body: payload,
     keepalive: true,
-  }).catch(() => { /* swallow — telemetry should never break the app */ });
+  }).catch(() => {
+    /* swallow — telemetry should never break the app */
+  });
 }
 
 // Flush on page hide / unload.
