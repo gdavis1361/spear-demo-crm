@@ -16,6 +16,22 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'es2020',
       sourcemap: true,
+      rollupOptions: {
+        output: {
+          // Pin the seeds + Zod lazy chunk to a stable `schemas-*.js`
+          // filename so `size-limit` thresholds stay meaningful across
+          // refactors. Without this, Rollup sometimes names it
+          // `index-*.js` when a new dynamic importer lands, which
+          // collides with the entry chunk glob and inflates the
+          // measured initial-bundle size.
+          manualChunks(id) {
+            if (id.includes('/src/seeds/') || id.includes('/node_modules/zod/')) {
+              return 'schemas';
+            }
+            return undefined;
+          },
+        },
+      },
     },
   };
 });
