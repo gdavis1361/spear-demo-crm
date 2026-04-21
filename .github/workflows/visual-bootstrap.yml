@@ -1,0 +1,75 @@
+name: visual-bootstrap
+
+# Manually-triggered job that regenerates the visual-regression baselines
+# inside CI (Linux). Use this whenever the design intentionally shifts and
+# the existing macOS-recorded baselines no longer match what the CI runner
+# produces. The job opens a PR with the refreshed `-linux.png` snapshots so
+# a human reviews the diff before it lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are we re-baselining? (links to design ticket / PR if any)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: visual-bootstrap
+  cancel-in-progress: true
+
+jobs:
+  rebaseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Build (snapshots target the production bundle)
+        run: npm run build
+
+      - name: Regenerate Linux baselines
+        run: npm run test:visual:update
+
+      - name: Open PR with refreshed baselines
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/rebaseline-visual-${{ github.run_id }}
+          base: main
+          commit-message: 'chore(tests): regenerate visual baselines on Linux'
+          title: 'chore(tests): regenerate visual baselines'
+          body: |
+            Refreshed via the `visual-bootstrap` workflow.
+
+            **Reason:** ${{ inputs.reason }}
+
+            Reviewer: open the PR's *Files changed* tab and inspect each
+            `tests/visual/**/*-snapshots/*-linux.png` against the previous
+            baseline. Approve only if the visual delta matches the intent.
+          labels: |
+            kind:chore
+            area:tests
+          delete-branch: true
