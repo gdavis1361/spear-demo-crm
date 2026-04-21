@@ -15,108 +15,93 @@
 
 import { test, expect } from '@playwright/test';
 
+/**
+ * Read counts from a named IndexedDB's stores. Returns -1 on any error.
+ * Does not wait for seeding to complete — callers use `expect.poll` to
+ * handle the async hydration that runs after first paint.
+ */
+async function readCounts(
+  page: import('@playwright/test').Page,
+  dbName: string
+): Promise<{ promiseCount: number; dealCount: number }> {
+  return page.evaluate(async (name) => {
+    return new Promise<{ promiseCount: number; dealCount: number }>((resolve) => {
+      const req = indexedDB.open(name);
+      req.onerror = () => resolve({ promiseCount: -1, dealCount: -1 });
+      req.onsuccess = () => {
+        const db = req.result;
+        const promiseCountP = db.objectStoreNames.contains('promises')
+          ? new Promise<number>((res) => {
+              const tx = db.transaction('promises', 'readonly');
+              const c = tx.objectStore('promises').count();
+              c.onsuccess = () => res(c.result);
+              c.onerror = () => res(-1);
+            })
+          : Promise.resolve(0);
+        const dealCountP = db.objectStoreNames.contains('events')
+          ? new Promise<number>((res) => {
+              const tx = db.transaction('events', 'readonly');
+              const c = tx.objectStore('events').count();
+              c.onsuccess = () => res(c.result);
+              c.onerror = () => res(-1);
+            })
+          : Promise.resolve(0);
+        Promise.all([promiseCountP, dealCountP]).then(([p, d]) => {
+          db.close();
+          resolve({ promiseCount: p, dealCount: d });
+        });
+      };
+    });
+  }, dbName);
+}
+
 test.describe('Phase 3 PR 1 — real DB survives scenario round-trip', () => {
   test('navigate to ?seed=busy-rep and back preserves real DB state', async ({ page }) => {
-    // Step 1: land on the default app, confirm canonical promises are visible.
+    // Step 1: land on the default app, confirm canonical promises seed in.
+    // Seeding is async from `bootRuntime()` so we poll IDB until the
+    // canonical scenario's 5 promises have persisted — h1 paints well
+    // before seeding completes on a fast CI runner.
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect
+      .poll(async () => (await readCounts(page, 'spear-events')).promiseCount, {
+        message: 'canonical scenario did not seed ≥5 promises into the real DB',
+        timeout: 10_000,
+      })
+      .toBeGreaterThanOrEqual(5);
+    const realBefore = await readCounts(page, 'spear-events');
 
-    // Read the canonical DB's promise count from its IndexedDB directly so
-    // we have an objective fingerprint, not a UI-layer approximation.
-    const realBefore = await page.evaluate(async () => {
-      return new Promise<{ dbs: string[]; promiseCount: number }>((resolve) => {
-        // Count promises in `spear-events` → `promises` store.
-        const req = indexedDB.open('spear-events');
-        req.onsuccess = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains('promises')) {
-            db.close();
-            resolve({ dbs: Array.from(db.objectStoreNames), promiseCount: 0 });
-            return;
-          }
-          const tx = db.transaction('promises', 'readonly');
-          const ps = tx.objectStore('promises');
-          const count = ps.count();
-          count.onsuccess = () => {
-            db.close();
-            resolve({ dbs: Array.from(db.objectStoreNames), promiseCount: count.result });
-          };
-          count.onerror = () => {
-            db.close();
-            resolve({ dbs: [], promiseCount: -1 });
-          };
-        };
-        req.onerror = () => resolve({ dbs: [], promiseCount: -1 });
-      });
-    });
-    expect(realBefore.promiseCount).toBeGreaterThanOrEqual(5);
-
-    // Step 2: navigate to busy-rep and verify its DB exists with more data.
+    // Step 2: navigate to busy-rep; poll until the seed DB holds ≥20 of
+    // each entity (busy-rep seeds ~30 each).
     await page.goto('/?seed=busy-rep');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-
-    const seedSnapshot = await page.evaluate(async () => {
-      return new Promise<{ promiseCount: number; dealCount: number }>((resolve) => {
-        const req = indexedDB.open('spear-events-seed-busy-rep');
-        req.onsuccess = () => {
-          const db = req.result;
-          const promiseCount = new Promise<number>((res) => {
-            const tx = db.transaction('promises', 'readonly');
-            const c = tx.objectStore('promises').count();
-            c.onsuccess = () => res(c.result);
-            c.onerror = () => res(-1);
-          });
-          const dealCount = new Promise<number>((res) => {
-            const tx = db.transaction('events', 'readonly');
-            const c = tx.objectStore('events').count();
-            c.onsuccess = () => res(c.result);
-            c.onerror = () => res(-1);
-          });
-          Promise.all([promiseCount, dealCount]).then(([p, d]) => {
-            db.close();
-            resolve({ promiseCount: p, dealCount: d });
-          });
-        };
-        req.onerror = () => resolve({ promiseCount: -1, dealCount: -1 });
-      });
-    });
-    // busy-rep seeds ~30 promises and ~30 deal.created events.
-    expect(seedSnapshot.promiseCount).toBeGreaterThanOrEqual(20);
-    expect(seedSnapshot.dealCount).toBeGreaterThanOrEqual(20);
+    await expect
+      .poll(async () => (await readCounts(page, 'spear-events-seed-busy-rep')).promiseCount, {
+        message: 'busy-rep did not seed ≥20 promises into the isolated DB',
+        timeout: 10_000,
+      })
+      .toBeGreaterThanOrEqual(20);
+    await expect
+      .poll(async () => (await readCounts(page, 'spear-events-seed-busy-rep')).dealCount, {
+        message: 'busy-rep did not seed ≥20 deal events into the isolated DB',
+        timeout: 10_000,
+      })
+      .toBeGreaterThanOrEqual(20);
 
     // Step 3: navigate back to `/` and verify the real DB is intact.
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-
-    const realAfter = await page.evaluate(async () => {
-      return new Promise<number>((resolve) => {
-        const req = indexedDB.open('spear-events');
-        req.onsuccess = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains('promises')) {
-            db.close();
-            resolve(0);
-            return;
-          }
-          const tx = db.transaction('promises', 'readonly');
-          const c = tx.objectStore('promises').count();
-          c.onsuccess = () => {
-            db.close();
-            resolve(c.result);
-          };
-          c.onerror = () => {
-            db.close();
-            resolve(-1);
-          };
-        };
-        req.onerror = () => resolve(-1);
-      });
-    });
-
-    // The real DB's promise count must not have dropped during the seed
-    // round-trip. (Vacuum or future-dated canonical promises may increase
-    // it; they cannot decrease it.)
-    expect(realAfter).toBeGreaterThanOrEqual(realBefore.promiseCount);
+    // Real DB's promise count must not drop. Poll in case another async
+    // hydrate tick is still in flight from the return navigation.
+    await expect
+      .poll(async () => (await readCounts(page, 'spear-events')).promiseCount, {
+        message: 'real DB count dropped after seed round-trip — isolation broken',
+        timeout: 10_000,
+      })
+      .toBeGreaterThanOrEqual(realBefore.promiseCount);
+    // Poll above is the load-bearing assertion: real DB's promise count
+    // didn't drop during the seed round-trip. (Vacuum or future-dated
+    // canonical promises may increase it; they cannot decrease it.)
   });
 
   test('charset-invalid ?seed= value falls through to the default app', async ({ page }) => {
