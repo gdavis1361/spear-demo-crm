@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { validate, dryRun, run, replay, patched } from './workflow-runner';
+import { validate, dryRun, run, patched } from './workflow-runner';
 import type { WorkflowDefinition } from './workflow-def';
 import { PCS_CYCLE_OUTREACH } from './workflow-def';
 import { InMemoryEventLog, workflowRunStream } from './events';
@@ -61,7 +61,7 @@ describe('dryRun()', () => {
 
   it('passes a workflow whose filter predicate is true', () => {
     const result = dryRun(PCS_CYCLE_OUTREACH, {
-      input: { has_orders: 'true', recently_quoted: 'false' },  // predicate is `has_orders && !recently_quoted` — tested as the literal key
+      input: { has_orders: 'true', recently_quoted: 'false' }, // predicate is `has_orders && !recently_quoted` — tested as the literal key
       runId: 'run_test',
     });
     // Filter step inspects `has_orders && !recently_quoted` literally — adapt expectation.
@@ -76,7 +76,11 @@ describe('dryRun()', () => {
 
   it('emits a wait-step trace and pauses execution', () => {
     const def: WorkflowDefinition = {
-      id: 'wf-test', name: 't', version: 1, description: '', retry: DEFAULT_RETRY,
+      id: 'wf-test',
+      name: 't',
+      version: 1,
+      description: '',
+      retry: DEFAULT_RETRY,
       steps: [
         { kind: 'trigger', source: 'manual', label: 'go' },
         { kind: 'wait', label: 'wait 5m', durationMs: 5 * 60_000 },

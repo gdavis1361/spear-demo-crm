@@ -292,6 +292,7 @@ export function Signals() {
             const isTabStop = idx === focusIdx;
             const isActioned = s.mark === 'actioned';
             return (
+              // eslint-disable-next-line jsx-a11y/click-events-have-key-events -- WAI-ARIA APG "Data Grids": keyboard lives on the grid container via `onKeyDown={onGridKey}` (line 287 → ArrowUp/Down/Home/End/Enter/Space). Rows are the roving-tabindex surface but delegate key handling upward per the APG pattern. Duplicating onKeyDown here would fork from the grid's navigation semantics.
               <div
                 key={s.id}
                 role="row"

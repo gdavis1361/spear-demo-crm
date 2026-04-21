@@ -18,7 +18,7 @@ import type { DealId, AccountId, LeadId, SignalId } from '../lib/ids';
 import { ulid, ulidTimestamp } from '../lib/ulid';
 import { track } from '../app/telemetry';
 import { getDbName, lockDbName, setDbName, _resetDbNameForTests } from './db-name';
-import type { EventEnvelopeT, ValidatedPayload } from './event-schema';
+import type { ValidatedPayload } from './event-schema';
 import { validatePayload, validateEnvelope } from './event-schema';
 
 // Re-export the DB-name helpers so existing consumers (tests, seed

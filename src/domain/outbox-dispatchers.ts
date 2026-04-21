@@ -5,7 +5,7 @@
 // future non-event-sourced mutation kinds and so tests can stub a
 // registry without pulling in every api client dependency.
 
-import type { ApiError, ErrorCode } from '../api/errors';
+import type { ErrorCode } from '../api/errors';
 import { api } from '../api/client';
 import type { Result } from '../api/types';
 import type {

@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
 import type { Money } from './money';
-import type { LeadId, AccountId, DealId, SignalId, PersonId, BaseId } from './ids';
+// Only the brands used *inline* below. The re-export surface at the
+// bottom of this file pulls the full set directly from './ids' — this
+// import and that re-export are intentionally NOT the same binding,
+// so adding a new brand to ids.ts doesn't silently land an unused
+// import here the next time someone adds a file-wide type alias.
+import type { LeadId, AccountId } from './ids';
 import type { DerivedValue } from '../ontology/lineage';
 
 export type Screen = 'today' | 'pipeline' | 'pond' | 'signals' | 'account' | 'quote' | 'workflows';
@@ -105,5 +110,16 @@ export interface Tweaks {
 // Re-export primitives so callers have a single import site.
 export type { Money, Currency } from './money';
 export type { Instant, ZonedDateTime, IanaZone } from './time';
-export type { LeadId, AccountId, DealId, MoveId, SignalId, PersonId, BaseId, DocId, RepId, RequestId } from './ids';
+export type {
+  LeadId,
+  AccountId,
+  DealId,
+  MoveId,
+  SignalId,
+  PersonId,
+  BaseId,
+  DocId,
+  RepId,
+  RequestId,
+} from './ids';
 export type { PhoneNumber, EmailAddress } from './contact';

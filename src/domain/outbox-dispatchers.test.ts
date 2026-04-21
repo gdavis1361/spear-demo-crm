@@ -9,7 +9,7 @@
 // permanent-failure path for `advance_deal` appends a `deal.reverted`
 // event to the stream.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   IndexedDbEventLog,
   dealStream,
